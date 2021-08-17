@@ -23,8 +23,9 @@ TIMEOUTDEFAULT = 10  # FTP server timeout
 
 
 def initialize_logger() -> logging.Logger:
-    """Set up logger
+    """Set up logger.
     If the module is ran as a module, name logger accordingly as a sublogger.
+
     Returns:
         logging.Logger: logger instance
     """
@@ -162,7 +163,7 @@ class pFTP:
 
         File is uploaded to target_dir.
         If overwrite is set to False, first check if file exists on remote.
-            If file exists, raise FileExistsOnServer and exit.
+        If file exists, raise FileExistsOnServer and exit.
 
         Args:
             file (str): path to file to be uploaded
