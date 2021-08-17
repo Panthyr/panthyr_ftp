@@ -1,8 +1,9 @@
 ===============================
-Panthyr FTP
+Panthyr FTP Usage
 ===============================
 
 Example code:
+
 .. code:: python
 
     >>> from panthyr_ftp.p_ftp import pFTP
