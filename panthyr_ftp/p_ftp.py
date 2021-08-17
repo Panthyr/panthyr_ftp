@@ -141,3 +141,13 @@ class pFTP:
         # some servers respond with 550 SIZE not allowed in ASCII mode if not set to TYPE I
         self.ftp.voidcmd('TYPE I')
         return self.ftp.size(file)  # returns None if not succesful
+
+    def quit(self) -> None:
+        """Send a QUIT command to the server and close the connection.
+
+        from ftplib: This is the “polite” way to close a connection, but it may raise an exception 
+                        if the server responds with an error to the QUIT command. 
+                        This implies a call to the close() method which renders 
+                        the FTP instance useless for subsequent calls.
+        """
+        self.ftp.quit()
