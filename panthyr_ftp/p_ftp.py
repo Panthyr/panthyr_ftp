@@ -40,7 +40,10 @@ class FileExistsOnServer(Exception):
 
 
 class UploadFailed(Exception):
-    """Tried uploading a file, but file does not exist on server afterwards."""
+    """
+    Tried uploading a file, but uploading failed and 
+    the file does not exist on server afterwards.
+    """
     pass
 
 
@@ -76,21 +79,68 @@ class pFTP:
         self.ftp.close()
 
     def login(self) -> None:
+        """Log on to the server with provided credentials.
+
+        Raises:
+            ftplib.error_perm: if connection fails.
+        """
         try:
             self.ftp.login(user=self.user, passwd=self.pw)
         except ftplib.error_perm as e:
             self.log.error(f'could not log in to {self.server}: {e}', exc_info=True)
             raise
 
-    def _cwd(self, target_dir: str) -> None:
+    def cwd(self, target_dir: str) -> None:
+        """Change the working directory on the server.
+
+        Args:
+            target_dir (str): [description]
+        """
         try:
             self.ftp.cwd(target_dir)
         except ftplib.error_perm as e:
             self.log.error(f'could not change directory to {target_dir}: {e}', exc_info=True)
             raise
 
-    def get_contents(self, dir='.') -> List[List[str]]:
+    def _temp_cwd(self, target_dir: Union[str, None]) -> Union[str, None]:
+        """Temporarily change the working directory.
 
+        If target_dir, get the current working directory, change to target, 
+            then return the inital working directory.
+
+        Args:
+            target_dir (Union[str, None]): target directory for running operation.
+
+        Returns:
+            Union[str, None]: initial working directory if target_dir is set, otherwise None
+        """
+        ret = None
+        if target_dir:
+            ret = self.pwd()
+            self.cwd(target_dir)
+        return ret
+
+    def pwd(self) -> str:
+        """Get the current working directory on the server.
+
+        Returns:
+            str: current working directory
+        """
+        return self.ftp.pwd()
+
+    def get_contents(self, dir='.') -> List[List[str]]:
+        """Return files and subdirectories of dir on server.
+
+        Args:
+            dir (str, optional): path to directory to get contents of. 
+                Defaults to '.' (current working directory)
+
+        Returns:
+            List[List[str]]: List of two lists,
+                first containing all directories
+                second containing all files.
+                Both are empty if there are no files/directories
+        """
         cmd = f'LIST {dir}'  # command to be sent to the server
         ret_ftp: List[str] = []  # empty list to hold lines returned by ftp command
         self.ftp.retrlines(cmd, callback=ret_ftp.append)
@@ -104,22 +154,32 @@ class pFTP:
 
         return ret
 
-    def upload_file(self, file: str, overwrite: bool = True) -> None:
-        """[summary]
+    def upload_file(self,
+                    file: str,
+                    target_dir: Union[None, str] = '.',
+                    overwrite: bool = True) -> None:
+        """Upload file from local system to server.
 
-        [extended_summary]
+        File is uploaded to target_dir.
+        If overwrite is set to False, first check if file exists on remote.
+            If file exists, raise FileExistsOnServer and exit.
 
         Args:
-            file (str): [description]
-            overwrite (bool, optional): [description]. Defaults to True.
+            file (str): path to file to be uploaded
+            target_dir (Union[None, str]): remote target directory for the upload.
+                                    Defaults to None (current working directory)
+            overwrite (bool, optional): Silently overwrite file if it exists on server.
+                                            Defaults to True.
 
         Raises:
-            ValueError: [description]
-            FileExistsOnServer: [description]
-            UploadFailed: [description]
+            ValueError: source file does not exist on local system.
+            FileExistsOnServer: target file exists on server and overwrite == False
+            UploadFailed: issue during upload of file
         """
         if not os.path.isfile(file):
             raise ValueError(f'File {file} does not exist.')
+
+        initial_dir = self._temp_cwd(target_dir)
 
         target_filename = os.path.basename(file)
         if not overwrite and self._file_exists(target_filename):
@@ -133,11 +193,29 @@ class pFTP:
                 f'Uploading {file} failed, doesn\'t exist on server. Return from STOR: {ret_ftp}')
             raise UploadFailed(ret_ftp)
 
+        self._temp_cwd(initial_dir)
+
     def _file_exists(self, file: str) -> bool:
+        """Check if file exists in current directory.
+
+        Args:
+            file (str): file to be checked
+
+        Returns:
+            bool: [description]
+        """
         files = self.get_contents()[1]
         return any(file.lower() == file_ftp.lower() for file_ftp in files)
 
     def get_size(self, file: str) -> Union[int, None]:
+        """Get size of file on server.
+
+        Args:
+            file (str): filename to get size of
+
+        Returns:
+            Union[int, None]: file size in bytes or None if not succesful.
+        """
         # some servers respond with 550 SIZE not allowed in ASCII mode if not set to TYPE I
         self.ftp.voidcmd('TYPE I')
         return self.ftp.size(file)  # returns None if not succesful
