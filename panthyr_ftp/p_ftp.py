@@ -74,10 +74,11 @@ class pFTP:
     def __enter__(self):
         """Use as context handler"""
         self.login()
+        return self
 
-    def __exit__(self):
+    def __exit__(self, exc_type, exc_value, tb):
         """Use as context handler"""
-        self.ftp.close()
+        self.quit()
 
     def login(self) -> None:
         """Log on to the server with provided credentials.
