@@ -1,9 +1,8 @@
 #! /usr/bin/python3
-# coding: utf-8
-
+# -*- coding: utf-8 -*-
 # Module: panthyr_ftp
 # Authors: Dieter Vansteenwegen
-# Institution: VLIZ (Vlaams Institute voor de Zee)
+# Institution: VLIZ (Vlaams Instituut voor de Zee)
 
 __author__ = 'Dieter Vansteenwegen'
 __version__ = '0.1b'
@@ -50,6 +49,7 @@ class UploadFailed(Exception):
 
 class pFTP:
     """Access to the FTP server for storing data and logs"""
+
     def __init__(self,
                  server: str,
                  user: str,
@@ -68,7 +68,7 @@ class pFTP:
             else:
                 self.ftp = ftplib.FTP_TLS(host=self.server, timeout=self.timeout)
         except socket.gaierror as e:
-            self.log.error(f'could not connect to {self.server}: {e}', exc_info=True)
+            self.log.exception(f'could not connect to {self.server}: {e}', exc_info=True)
             raise
 
     def __enter__(self):
@@ -89,7 +89,7 @@ class pFTP:
         try:
             self.ftp.login(user=self.user, passwd=self.pw)
         except ftplib.error_perm as e:
-            self.log.error(f'could not log in to {self.server}: {e}', exc_info=True)
+            self.log.exception(f'could not log in to {self.server}: {e}', exc_info=True)
             raise
 
     def cwd(self, target_dir: str) -> None:
@@ -101,7 +101,7 @@ class pFTP:
         try:
             self.ftp.cwd(target_dir)
         except ftplib.error_perm as e:
-            self.log.error(f'could not change directory to {target_dir}: {e}', exc_info=True)
+            self.log.exception(f'could not change directory to {target_dir}: {e}', exc_info=True)
             raise
 
     def _temp_cwd(self, target_dir: Union[str, None]) -> Union[str, None]:
