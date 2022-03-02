@@ -5,7 +5,7 @@
 # Institution: VLIZ (Vlaams Instituut voor de Zee)
 
 __author__ = 'Dieter Vansteenwegen'
-__version__ = '0.1b'
+__version__ = '0.1.0-beta'
 __email__ = 'dieter.vansteenwegen@vliz.be'
 __status__ = 'Development'
 __project__ = 'Panthyr'
