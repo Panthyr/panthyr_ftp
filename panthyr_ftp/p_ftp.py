@@ -11,6 +11,8 @@ __status__ = 'Development'
 __project__ = 'Panthyr'
 __project_link__ = 'https://waterhypernet.org/equipment/'
 
+__all__ = ['pFTP', 'FileExistsOnServer', 'UploadFailed']
+
 import ftplib
 import os
 import logging
