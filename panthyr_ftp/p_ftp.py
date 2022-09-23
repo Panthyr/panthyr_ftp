@@ -11,38 +11,37 @@ __status__ = 'Development'
 __project__ = 'Panthyr'
 __project_link__ = 'https://waterhypernet.org/equipment/'
 
-__all__ = ['pFTP', 'FileExistsOnServer', 'UploadFailed']
+__all__ = ['pFTP', 'FTPFileExistsOnServer', 'FTPUploadFailed']
 
-import ftplib
+import ftplib  # nosec B402  # ftp over TLS if used. Not ideal, but that is what is available.
 import os
 import logging
 from typing import List, Union
 import socket
 
-TIMEOUTDEFAULT = 10  # FTP server timeout
+TIMEOUTDEFAULT = 20  # FTP server timeout
 
 
-def initialize_logger() -> logging.Logger:
-    """Set up logger.
-    If the module is ran as a module, name logger accordingly as a sublogger.
-
-    Returns:
-        logging.Logger: logger instance
-    """
-    if __name__ == '__main__':
-        return logging.getLogger('__main__')
-    else:
-        return logging.getLogger('__main__.{}'.format(__name__))
+class FTPError(Exception):
+    pass
 
 
-class FileExistsOnServer(Exception):
+class FTPCannotConnectError(FTPError):
+    pass
+
+
+class FTPCannotLoginError(FTPError):
+    pass
+
+
+class FTPFileExistsOnServer(FTPError):
     """Trying to upload a file that already exists on server"""
     pass
 
 
-class UploadFailed(Exception):
+class FTPUploadFailed(FTPError):
     """
-    Tried uploading a file, but uploading failed and 
+    Tried uploading a file, but uploading failed and
     the file does not exist on server afterwards.
     """
     pass
@@ -51,26 +50,23 @@ class UploadFailed(Exception):
 class pFTP:
     """Access to the FTP server for storing data and logs"""
 
-    def __init__(self,
-                 server: str,
-                 user: str,
-                 pw: str,
-                 use_sftp: bool = True,
-                 timeout: int = TIMEOUTDEFAULT) -> None:
-        self.log = initialize_logger()
+    def __init__(
+        self,
+        server: str,
+        user: str,
+        pw: str,
+        timeout: int = TIMEOUTDEFAULT,
+    ) -> None:
+        self.log = logging.getLogger(__name__)
         self.server = server
         self.user = user
         self.pw = pw
-        self.secure = use_sftp
         self.timeout = timeout
         try:
-            if self.secure:
-                self.ftp = ftplib.FTP(host=self.server, timeout=self.timeout)
-            else:
-                self.ftp = ftplib.FTP_TLS(host=self.server, timeout=self.timeout)
+            self.ftp = ftplib.FTP_TLS(host=self.server, timeout=self.timeout)  # nosec B321
         except socket.gaierror as e:
             self.log.exception(f'could not connect to {self.server}: {e}', exc_info=True)
-            raise
+            raise FTPCannotConnectError from e
 
     def __enter__(self):
         """Use as context handler"""
@@ -90,8 +86,8 @@ class pFTP:
         try:
             self.ftp.login(user=self.user, passwd=self.pw)
         except ftplib.error_perm as e:
-            self.log.exception(f'could not log in to {self.server}: {e}', exc_info=True)
-            raise
+            self.log.exception(f'could not log in to {self.server}', exc_info=True)
+            raise FTPCannotLoginError from e
 
     def cwd(self, target_dir: str) -> None:
         """Change the working directory on the server.
@@ -102,13 +98,13 @@ class pFTP:
         try:
             self.ftp.cwd(target_dir)
         except ftplib.error_perm as e:
-            self.log.exception(f'could not change directory to {target_dir}: {e}', exc_info=True)
-            raise
+            self.log.exception(f'could not change directory to {target_dir}')
+            raise FTPError from e
 
     def _temp_cwd(self, target_dir: Union[str, None]) -> Union[str, None]:
         """Temporarily change the working directory.
 
-        If target_dir, get the current working directory, change to target, 
+        If target_dir, get the current working directory, change to target,
             then return the inital working directory.
 
         Args:
@@ -135,7 +131,7 @@ class pFTP:
         """Return files and subdirectories of dir on server.
 
         Args:
-            dir (str, optional): path to directory to get contents of. 
+            dir (str, optional): path to directory to get contents of.
                 Defaults to '.' (current working directory)
 
         Returns:
@@ -157,10 +153,13 @@ class pFTP:
 
         return ret
 
-    def upload_file(self,
-                    file: str,
-                    target_dir: Union[None, str] = '.',
-                    overwrite: bool = True) -> None:
+    def upload_file(
+        self,
+        file: str,
+        target_dir: Union[None, str] = '.',
+        overwrite: bool = True,
+        target_filename: Union[str, None] = None,
+    ) -> None:
         """Upload file from local system to server.
 
         File is uploaded to target_dir.
@@ -183,18 +182,19 @@ class pFTP:
             raise ValueError(f'File {file} does not exist.')
 
         initial_dir = self._temp_cwd(target_dir)
-
-        target_filename = os.path.basename(file)
+        if not target_filename:
+            target_filename = os.path.basename(file)
         if not overwrite and self._file_exists(target_filename):
-            raise FileExistsOnServer
+            raise FTPFileExistsOnServer
 
         # first argument to STOR is the target filename on the server, including path
         ret_ftp = self.ftp.storbinary(f'STOR {target_filename}', open(file, 'rb'))
 
         if not self._file_exists(target_filename):
             self.log.error(
-                f'Uploading {file} failed, doesn\'t exist on server. Return from STOR: {ret_ftp}')
-            raise UploadFailed(ret_ftp)
+                f'Uploading {file} failed, doesn\'t exist on server. Return from STOR: {ret_ftp}',
+            )
+            raise FTPUploadFailed(ret_ftp)
 
         self._temp_cwd(initial_dir)
 
@@ -226,9 +226,9 @@ class pFTP:
     def quit(self) -> None:
         """Send a QUIT command to the server and close the connection.
 
-        from ftplib: This is the “polite” way to close a connection, but it may raise an exception 
-                        if the server responds with an error to the QUIT command. 
-                        This implies a call to the close() method which renders 
+        from ftplib: This is the “polite” way to close a connection, but it may raise an exception
+                        if the server responds with an error to the QUIT command.
+                        This implies a call to the close() method which renders
                         the FTP instance useless for subsequent calls.
         """
         self.ftp.quit()
