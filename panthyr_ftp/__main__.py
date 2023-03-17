@@ -1,6 +1,5 @@
 #! /usr/bin/python3
 # -*- coding: utf-8 -*-
-# Module: __main__.py
 # Authors: Dieter Vansteenwegen
 # Institution: VLIZ (Vlaams Instituut voor de Zee)
 
