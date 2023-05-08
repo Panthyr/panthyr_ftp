@@ -4,9 +4,8 @@
 # Institution: VLIZ (Vlaams Instituut voor de Zee)
 
 __author__ = 'Dieter Vansteenwegen'
-__version__ = '0.1.0-beta'
 __email__ = 'dieter.vansteenwegen@vliz.be'
-__status__ = 'Development'
+__status__ = 'Production'
 __project__ = 'Panthyr'
 __project_link__ = 'https://waterhypernet.org/equipment/'
 
