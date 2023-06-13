@@ -165,7 +165,7 @@ class pFTP:
     def upload_file(
         self,
         file: str,
-        target_dir: Union[None, str] = '.',
+        # target_dir: Union[None, str] = '.',
         overwrite: bool = True,
         target_filename: Union[str, None] = None,
     ) -> None:
@@ -190,7 +190,7 @@ class pFTP:
         if not os.path.isfile(file):
             raise ValueError(f'File {file} does not exist.')
 
-        initial_dir = self._temp_cwd(target_dir)
+        # initial_dir = self._temp_cwd(target_dir)
         if not target_filename:
             target_filename = os.path.basename(file)
         if not overwrite and self._file_exists(target_filename):
@@ -205,7 +205,7 @@ class pFTP:
             )
             raise FTPUploadFailed(ret_ftp)
 
-        self._temp_cwd(initial_dir)
+        # self._temp_cwd(initial_dir)
 
     def _file_exists(self, file: str) -> bool:
         """Check if file exists in current directory.
