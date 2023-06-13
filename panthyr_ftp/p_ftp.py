@@ -91,13 +91,24 @@ class pFTP:
         """Change the working directory on the server.
 
         Args:
-            target_dir (str): [description]
+            target_dir (str): directory to change to.
         """
         try:
+            self._prep_dir(target_dir)
             self.ftp.cwd(target_dir)
         except ftplib.error_perm as e:
             self.log.exception(f'could not change directory to {target_dir}')
             raise FTPError from e
+
+    def _prep_dir(self, dir: str) -> None:
+        """Check if subdirectory exists in the current working directory. If not, create.
+
+        Args:
+            dir (str): subdirectory to check/create
+        """
+        if dir not in self.get_contents('.')[0]:
+            self.log.debug(f'Creating directory [{dir}] on server...')
+            self.ftp.mkd(dir)
 
     def _temp_cwd(self, target_dir: Union[str, None]) -> Union[str, None]:
         """Temporarily change the working directory.
