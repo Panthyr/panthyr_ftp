@@ -94,7 +94,7 @@ class pFTP:
         Args:
             target_dir (str): directory to change to.
         """
-        target_dir_checked = re.sub('[^0-9a-zA-Z]+', '_', target_dir)
+        target_dir_checked = re.sub('[^0-9a-zA-Z_]+', '_', target_dir)
         if target_dir_checked != target_dir:
             self.log.warning(
                 f'Invalid characters in directory name. Replaced [{target_dir}] '
@@ -102,8 +102,8 @@ class pFTP:
             )
 
         try:
-            self._prep_dir(target_dir)
-            self.ftp.cwd(target_dir)
+            self._prep_dir(target_dir_checked)
+            self.ftp.cwd(target_dir_checked)
         except ftplib.error_perm as e:
             self.log.exception(f'could not change directory to {target_dir}')
             raise FTPError from e
@@ -114,7 +114,9 @@ class pFTP:
         Args:
             dir (str): subdirectory to check/create
         """
-        if dir not in ['.', self.get_contents('.')[0]]:
+        dir_lst = self.get_contents('.')[0]
+        dir_lst.append('.')
+        if dir not in dir_lst:
             self.log.debug(f'Creating directory [{dir}] on server...')
             self.ftp.mkd(dir)
 
