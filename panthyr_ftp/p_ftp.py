@@ -106,7 +106,7 @@ class pFTP:
         Args:
             dir (str): subdirectory to check/create
         """
-        if dir not in self.get_contents('.')[0]:
+        if dir not in ['.', self.get_contents('.')[0]]:
             self.log.debug(f'Creating directory [{dir}] on server...')
             self.ftp.mkd(dir)
 
