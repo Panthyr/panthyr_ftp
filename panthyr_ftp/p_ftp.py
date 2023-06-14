@@ -16,6 +16,7 @@ import os
 import logging
 from typing import List, Union
 import socket
+import re
 
 TIMEOUTDEFAULT = 20  # FTP server timeout
 
@@ -93,6 +94,13 @@ class pFTP:
         Args:
             target_dir (str): directory to change to.
         """
+        target_dir_checked = re.sub('[^0-9a-zA-Z]+', '_', target_dir)
+        if target_dir_checked != target_dir:
+            self.log.warning(
+                f'Invalid characters in directory name. Replaced [{target_dir}] '
+                f'with [{target_dir_checked}].',
+            )
+
         try:
             self._prep_dir(target_dir)
             self.ftp.cwd(target_dir)
