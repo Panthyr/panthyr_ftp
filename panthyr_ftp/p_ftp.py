@@ -96,6 +96,8 @@ class pFTP:
     def cwd(self, target_dir: str) -> None:
         """Change the working directory on the server.
 
+        Always changes to the current year subdirectory from target_dir.
+
         Args:
             target_dir (str): directory to change to.
         """
@@ -112,7 +114,7 @@ class pFTP:
             self._prep_dir(year_str)
             self.ftp.cwd(year_str)
         except ftplib.error_perm as e:
-            self.log.exception(f'could not change directory to {target_dir}')
+            self.log.exception(f'Could not change directory to [{target_dir}]')
             raise FTPError from e
 
     def _prep_dir(self, dir: str) -> None:
