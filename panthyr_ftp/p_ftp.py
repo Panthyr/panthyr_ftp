@@ -17,8 +17,13 @@ import logging
 from typing import List, Union
 import socket
 import re
+from datetime import datetime as dt
 
 TIMEOUTDEFAULT = 20  # FTP server timeout
+
+
+def current_year_str() -> str:
+    return dt.now().strftime('%Y')
 
 
 class FTPError(Exception):
@@ -98,12 +103,14 @@ class pFTP:
         if target_dir_checked != target_dir:
             self.log.warning(
                 f'Invalid characters in directory name. Replaced [{target_dir}] '
-                f'with [{target_dir_checked}].',
-            )
+                f'with [{target_dir_checked}].', )
 
         try:
             self._prep_dir(target_dir_checked)
             self.ftp.cwd(target_dir_checked)
+            year_str = current_year_str()
+            self._prep_dir(year_str)
+            self.ftp.cwd(year_str)
         except ftplib.error_perm as e:
             self.log.exception(f'could not change directory to {target_dir}')
             raise FTPError from e
