@@ -69,8 +69,8 @@ class pFTP:
         try:
             self.ftp = ftplib.FTP_TLS(host=self.server, timeout=self.timeout)  # nosec B321
         except socket.gaierror as e:
-            self.log.exception(f'could not connect to {self.server}: {e}', exc_info=True)
-            raise FTPCannotConnectError from e
+            msg = f'could not connect to {self.server}: {e.args}'
+            raise FTPCannotConnectError(msg) from None
 
     def __enter__(self):
         """Use as context handler"""
