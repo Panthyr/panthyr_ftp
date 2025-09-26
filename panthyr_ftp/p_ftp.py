@@ -771,12 +771,13 @@ class pFTP:
         """
         self.log.debug(f'[FILE_EXISTS] Checking if file exists: {file}')
         try:
-            # Use direct FTP commands instead of path.isfile() to avoid hanging
-            # Try to get file size - if it succeeds, file exists
-            self.ftp._session.size(file)
-            exists = True
+            # Use NLST command to list files - more reliable than SIZE command
+            # which isn't supported in ASCII mode on many servers
+            files = self.ftp.nlst()
+            exists = file in files
             self.log.debug(f'[FILE_EXISTS] File {file} exists: {exists}')
-        except (ftputil.error.FTPError, OSError):
+        except (ftputil.error.FTPError, OSError) as e:
+            self.log.debug(f'[FILE_EXISTS] Error checking file existence: {e}')
             exists = False
             self.log.debug(f'[FILE_EXISTS] File {file} exists: {exists}')
         return exists
@@ -793,10 +794,31 @@ class pFTP:
         """
         self.log.debug(f'[GET_SIZE] Getting size for file: {file}')
         try:
-            # Use direct FTP SIZE command instead of path.getsize() to avoid hanging
-            size = self.ftp._session.size(file)
-            self.log.debug(f'[GET_SIZE] File {file} size: {format_file_size(size)}')
-            return size
+            # First try SIZE command, but fall back to LIST parsing if not supported
+            try:
+                size = self.ftp._session.size(file)
+                self.log.debug(f'[GET_SIZE] File {file} size via SIZE: {format_file_size(size)}')
+                return size
+            except (ftputil.error.FTPError, OSError) as size_error:
+                self.log.debug(f'[GET_SIZE] SIZE command failed: {size_error}, trying LIST parsing')
+
+                # Fall back to parsing LIST output
+                lines = []
+                try:
+                    self.ftp._session.retrlines(f'LIST {file}', lines.append)
+                    if lines:
+                        # Parse the LIST line to extract file size
+                        parts = lines[0].split()
+                        if len(parts) >= 5 and parts[0].startswith('-'):  # Regular file
+                            size = int(parts[4])  # Size is typically the 5th field
+                            self.log.debug(
+                                f'[GET_SIZE] File {file} size via LIST: {format_file_size(size)}'
+                            )
+                            return size
+                except (ftputil.error.FTPError, OSError, ValueError) as list_error:
+                    self.log.debug(f'[GET_SIZE] LIST parsing also failed: {list_error}')
+
+            return None
         except (ftputil.error.FTPError, OSError) as e:
             self.log.debug(f'[GET_SIZE] Could not get size of {file}: {e}')
             return None
