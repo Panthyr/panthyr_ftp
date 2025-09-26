@@ -262,6 +262,17 @@ class pFTP:
             except AttributeError as e:
                 self.log.warning(f'[LOGIN] Could not set passive mode: {e}')
 
+            # Set binary mode for reliable file transfers and SIZE command support
+            self.log.debug('[LOGIN] Setting binary transfer mode')
+            try:
+                if hasattr(self.ftp, '_session'):
+                    self.ftp._session.voidcmd('TYPE I')  # TYPE I = binary mode
+                    self.log.debug('[LOGIN] Binary mode enabled successfully')
+                else:
+                    self.log.warning('[LOGIN] Could not access _session to set binary mode')
+            except (ftputil.error.FTPError, OSError) as e:
+                self.log.warning(f'[LOGIN] Could not set binary mode: {e}')
+
             # Set timeout if supported
             self.log.debug(f'[LOGIN] Setting timeout to {self.timeout}s')
             if hasattr(self.ftp, 'set_timeout'):
