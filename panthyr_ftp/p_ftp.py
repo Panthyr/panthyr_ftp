@@ -445,10 +445,22 @@ class pFTP:
         try:
             if self.ftp and hasattr(self.ftp, '_session'):
                 self.log.debug('[ENSURE_BINARY] Setting binary transfer mode')
-                self.ftp._session.voidcmd('TYPE I')  # TYPE I = binary mode
+                try:
+                    response = self.ftp._session.voidcmd('TYPE I')  # TYPE I = binary mode
+                    self.log.debug(f'[ENSURE_BINARY] Server response: {response}')
+                except ftputil.error.FTPError as ftp_error:
+                    # Check if it's just an informational response about type change
+                    error_msg = str(ftp_error)
+                    if '200' in error_msg and ('Type set to' in error_msg or 'TYPE' in error_msg):
+                        self.log.debug(f'[ENSURE_BINARY] Server confirmed mode change: {error_msg}')
+                    else:
+                        # It's a real error
+                        raise
                 self.log.debug('[ENSURE_BINARY] Binary mode confirmed')
         except (ftputil.error.FTPError, OSError) as e:
-            self.log.warning(f'[ENSURE_BINARY] Could not ensure binary mode: {e}')
+            # Only warn if it's not a harmless "Type set to" response
+            if not ('200' in str(e) and 'Type set to' in str(e)):
+                self.log.warning(f'[ENSURE_BINARY] Could not ensure binary mode: {e}')
 
     @retry_on_connection_error()
     def cwd(self, target_dir: str) -> None:
@@ -559,9 +571,11 @@ class pFTP:
             try:
                 # Get detailed listing
                 lines = []
+                # retrlines automatically switches to ASCII mode
                 self.ftp._session.retrlines('LIST', lines.append)
 
-                # Restore binary mode after retrlines (which switches to ASCII)
+                # Allow server to complete mode transition, then restore binary mode
+                time.sleep(0.1)  # Brief pause for server to settle
                 self._ensure_binary_mode()
 
                 for line in lines:
@@ -915,9 +929,12 @@ class pFTP:
             # Use LIST command directly to avoid SIZE command issues in ASCII mode
             self.log.debug(f'[GET_SIZE] Using LIST command for file: {file}')
             lines = []
+            # retrlines automatically switches to ASCII mode
             self.ftp._session.retrlines(f'LIST {file}', lines.append)
 
-            # Restore binary mode after retrlines (which switches to ASCII)
+            # Allow server to complete mode transition, then restore binary mode
+            # Some servers send "200 Type set to A" which isn't an error
+            time.sleep(0.1)  # Brief pause for server to settle
             self._ensure_binary_mode()
 
             if lines:
