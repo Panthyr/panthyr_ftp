@@ -389,12 +389,17 @@ class pFTP:
             dir_name (str): subdirectory to check/create
         """
         self.log.debug(f'[PREP_DIR] Checking if directory exists: {dir_name}')
-        if not self.ftp.path.isdir(dir_name):
+        try:
+            # Try to change to the directory - if it works, it exists
+            current_dir = self.ftp.getcwd()
+            self.ftp.chdir(dir_name)
+            self.ftp.chdir(current_dir)  # Change back
+            self.log.debug(f'[PREP_DIR] Directory [{dir_name}] already exists')
+        except (ftputil.error.FTPError, OSError):
+            # Directory doesn't exist, create it
             self.log.debug(f'[PREP_DIR] Directory [{dir_name}] does not exist, creating...')
             self.ftp.mkdir(dir_name)
             self.log.debug(f'[PREP_DIR] Successfully created directory: {dir_name}')
-        else:
-            self.log.debug(f'[PREP_DIR] Directory [{dir_name}] already exists')
 
     def _temp_cwd(self, target_dir: Union[str, None]) -> Union[str, None]:
         """Temporarily change the working directory.
@@ -439,15 +444,34 @@ class pFTP:
         ret: List[List[str]] = [[], []]
 
         try:
-            # Get all entries in the directory
-            entries = self.ftp.listdir(directory)
+            # Use nlst() which is more reliable than listdir() + path.isdir()
+            # Parse the full directory listing to avoid hanging path operations
+            current_dir = self.ftp.getcwd()
+            if directory != '.' and directory != current_dir:
+                self.ftp.chdir(directory)
 
-            for entry in entries:
-                full_path = self.ftp.path.join(directory, entry) if directory != '.' else entry
-                if self.ftp.path.isdir(full_path):
-                    ret[0].append(entry)
-                else:
-                    ret[1].append(entry)
+            try:
+                # Get detailed listing
+                lines = []
+                self.ftp._session.retrlines('LIST', lines.append)
+
+                for line in lines:
+                    # Parse LIST output - first character indicates type
+                    if line.startswith('d'):  # Directory
+                        # Extract filename from end of line
+                        parts = line.split()
+                        if len(parts) >= 9:
+                            filename = ' '.join(parts[8:])  # Handle filenames with spaces
+                            ret[0].append(filename)
+                    elif line.startswith('-'):  # Regular file
+                        parts = line.split()
+                        if len(parts) >= 9:
+                            filename = ' '.join(parts[8:])
+                            ret[1].append(filename)
+            finally:
+                # Return to original directory if we changed it
+                if directory != '.' and directory != current_dir:
+                    self.ftp.chdir(current_dir)
 
             self.log.debug(
                 f'Directory scan complete. Found {len(ret[0])} dirs, {len(ret[1])} files'
@@ -746,8 +770,15 @@ class pFTP:
             bool: True if file exists, False otherwise
         """
         self.log.debug(f'[FILE_EXISTS] Checking if file exists: {file}')
-        exists = self.ftp.path.isfile(file)
-        self.log.debug(f'[FILE_EXISTS] File {file} exists: {exists}')
+        try:
+            # Use direct FTP commands instead of path.isfile() to avoid hanging
+            # Try to get file size - if it succeeds, file exists
+            self.ftp._session.size(file)
+            exists = True
+            self.log.debug(f'[FILE_EXISTS] File {file} exists: {exists}')
+        except (ftputil.error.FTPError, OSError):
+            exists = False
+            self.log.debug(f'[FILE_EXISTS] File {file} exists: {exists}')
         return exists
 
     @retry_on_connection_error()
@@ -762,7 +793,8 @@ class pFTP:
         """
         self.log.debug(f'[GET_SIZE] Getting size for file: {file}')
         try:
-            size = self.ftp.path.getsize(file)
+            # Use direct FTP SIZE command instead of path.getsize() to avoid hanging
+            size = self.ftp._session.size(file)
             self.log.debug(f'[GET_SIZE] File {file} size: {format_file_size(size)}')
             return size
         except (ftputil.error.FTPError, OSError) as e:
