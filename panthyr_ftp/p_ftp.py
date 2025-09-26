@@ -782,15 +782,22 @@ class pFTP:
         """
         self.log.debug(f'[FILE_EXISTS] Checking if file exists: {file}')
         try:
-            # Use NLST command to list files - more reliable than SIZE command
-            # which isn't supported in ASCII mode on many servers
-            files = self.ftp.nlst()
+            # Use ftputil's listdir() method to get file list
+            files = self.ftp.listdir('.')
             exists = file in files
             self.log.debug(f'[FILE_EXISTS] File {file} exists: {exists}')
         except (ftputil.error.FTPError, OSError) as e:
             self.log.debug(f'[FILE_EXISTS] Error checking file existence: {e}')
-            exists = False
-            self.log.debug(f'[FILE_EXISTS] File {file} exists: {exists}')
+            # Fallback: try using the underlying session's nlst command
+            try:
+                self.log.debug(f'[FILE_EXISTS] Trying fallback method with _session.nlst()')
+                files = self.ftp._session.nlst()
+                exists = file in files
+                self.log.debug(f'[FILE_EXISTS] File {file} exists (via fallback): {exists}')
+            except (ftputil.error.FTPError, OSError) as fallback_error:
+                self.log.debug(f'[FILE_EXISTS] Fallback also failed: {fallback_error}')
+                exists = False
+                self.log.debug(f'[FILE_EXISTS] File {file} exists: {exists}')
         return exists
 
     @retry_on_connection_error()
