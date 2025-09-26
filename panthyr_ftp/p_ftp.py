@@ -548,6 +548,12 @@ class pFTP:
                                 self.log.debug(f'Renaming {temp_filename} to {target_filename}')
                                 self.ftp.rename(temp_filename, target_filename)
 
+                                # Success! Exit the retry loop
+                                self.log.debug(
+                                    f'Atomic upload completed successfully: {target_filename}'
+                                )
+                                return
+
                             except (ftputil.error.FTPError, OSError) as rename_error:
                                 # Clean up temporary file on rename failure
                                 try:
