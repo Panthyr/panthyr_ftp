@@ -150,6 +150,7 @@ class pFTP:
     """Access to the FTP server with speed limiting and robust connection handling.
 
     This class provides enhanced FTP functionality including:
+    - Atomic uploads using temporary files and rename operations
     - Upload speed limiting and custom chunk sizes
     - Automatic retry logic for unstable connections
     - Connection health monitoring and recovery
@@ -467,9 +468,12 @@ class pFTP:
         overwrite: bool = True,
         target_filename: Union[str, None] = None,
     ) -> None:
-        """Upload file from local system to server with speed limiting and custom chunk size.
+        """Upload file from local system to server with atomic operations, speed limiting and verification.
 
-        File is uploaded with robust verification and optional speed limiting.
+        File is uploaded atomically using a temporary filename "uploading.now", then renamed to the
+        final target filename once upload is complete and verified. This prevents partial files
+        from being visible on the server during upload.
+
         If overwrite is set to False, first check if file exists on remote.
         If file exists, raise FileExistsOnServer and exit.
 
@@ -489,7 +493,7 @@ class pFTP:
         Raises:
             ValueError: source file does not exist on local system.
             FileExistsOnServer: target file exists on server and overwrite == False
-            UploadFailed: issue during upload of file
+            UploadFailed: issue during upload, verification, or atomic rename operation
         """
         if not os.path.isfile(file):
             msg = f'File {file} does not exist.'
@@ -502,7 +506,11 @@ class pFTP:
             raise FTPFileExistsOnServer
 
         # Enhanced upload with progress tracking and verification
-        self.log.debug(f'Starting robust upload of {file} as {target_filename}')
+        # Use atomic upload: upload to temporary name, then rename to final name
+        temp_filename = 'uploading.now'
+        self.log.debug(
+            f'Starting atomic upload of {file} as {target_filename} (via {temp_filename})'
+        )
 
         try:
             # Get local file size for verification and progress tracking
@@ -519,21 +527,19 @@ class pFTP:
                 try:
                     self.log.debug(f'Upload attempt {upload_attempts}/{max_upload_attempts}')
 
-                    # Perform the upload with speed limiting
-                    self._speed_limited_upload(file, target_filename)
-                    self.log.debug(f'Upload command completed for {target_filename}')
+                    # Clean up any existing temporary file first
+                    if self._file_exists(temp_filename):
+                        self.ftp.remove(temp_filename)
 
-                    # Immediate verification - check if file exists
-                    if not self._file_exists(target_filename):
-                        raise FTPUploadFailed(
-                            f'File {target_filename} not found after upload attempt'
-                        )
+                    # Perform the upload with speed limiting to temporary filename
+                    self._speed_limited_upload(file, temp_filename)
+                    self.log.debug(f'Upload command completed for temporary file {temp_filename}')
 
-                    # Size verification with retry
+                    # Size verification with retry on temporary file
                     remote_size = None
                     for size_check_attempt in range(3):  # Try up to 3 times to get size
                         try:
-                            remote_size = self.get_size(target_filename)
+                            remote_size = self.get_size(temp_filename)
                             if remote_size is not None:
                                 break
                         except Exception as size_error:
@@ -544,32 +550,68 @@ class pFTP:
                             else:
                                 time.sleep(1)  # Brief pause between size check attempts
 
-                    # Verify file integrity
+                    # Verify file integrity before rename
                     if remote_size is not None:
                         if remote_size == local_size:
                             self.log.debug(
-                                f'Upload successful and verified. '
+                                f'Upload to temporary file successful and verified. '
                                 f'Size: {format_file_size(remote_size)}'
                             )
-                            return  # Success!
+
+                            # Now perform atomic rename to final filename
+                            try:
+                                # Remove target file if it exists (for overwrite)
+                                if self._file_exists(target_filename):
+                                    self.log.debug(
+                                        f'Removing existing target file: {target_filename}'
+                                    )
+                                    self.ftp.remove(target_filename)
+
+                                # Rename temporary file to final name
+                                self.log.debug(f'Renaming {temp_filename} to {target_filename}')
+                                self.ftp.rename(temp_filename, target_filename)
+
+                            except (ftputil.error.FTPError, OSError) as rename_error:
+                                # Clean up temporary file on rename failure
+                                try:
+                                    if self._file_exists(temp_filename):
+                                        self.ftp.remove(temp_filename)
+                                        self.log.debug(
+                                            f'Cleaned up temporary file after rename failure'
+                                        )
+                                except Exception:
+                                    pass  # Don't fail on cleanup errors
+                                raise FTPUploadFailed(
+                                    f'Failed to rename {temp_filename} to {target_filename}: {rename_error}'
+                                )
                         else:
                             error_msg = (
                                 f'Size mismatch - Local: {format_file_size(local_size)}, '
                                 f'Remote: {format_file_size(remote_size)}'
                             )
                             self.log.warning(error_msg)
+                            # Clean up temporary file before retry
+                            try:
+                                if self._file_exists(temp_filename):
+                                    self.ftp.remove(temp_filename)
+                            except Exception:
+                                pass
+
                             if upload_attempts < max_upload_attempts:
-                                self.log.info(f'Retrying upload due to size mismatch...')
+                                self.log.info('Retrying upload due to size mismatch...')
                                 continue
                             else:
                                 raise FTPUploadFailed(error_msg)
-                    else:
-                        self.log.warning(
-                            'Could not verify remote file size, but upload appears successful'
-                        )
-                        return  # Assume success if we can't verify size
 
                 except (ftputil.error.FTPError, OSError, socket.error) as upload_error:
+                    # Clean up temporary file on upload error
+                    try:
+                        if self._file_exists(temp_filename):
+                            self.ftp.remove(temp_filename)
+                            self.log.debug('Cleaned up temporary file after upload error')
+                    except Exception:
+                        pass  # Don't fail on cleanup errors
+
                     if upload_attempts < max_upload_attempts:
                         self.log.warning(
                             f'Upload attempt {upload_attempts} failed: {upload_error}. Retrying...'
@@ -582,10 +624,17 @@ class pFTP:
                         ) from upload_error
 
         except FTPUploadFailed:
+            # Clean up temporary file on any FTP upload failure
+            try:
+                if self._file_exists(temp_filename):
+                    self.ftp.remove(temp_filename)
+                    self.log.debug('Cleaned up temporary file after FTP upload failure')
+            except Exception:
+                pass  # Don't fail on cleanup errors
             raise  # Re-raise FTP upload failures
         except Exception as e:
             self.log.error(f'Unexpected error during upload: {e}')
-            raise FTPUploadFailed(f'Unexpected upload error: {e}') from e
+            raise FTPUploadFailed('Unexpected upload error') from e
 
         # self._temp_cwd(initial_dir)
 
