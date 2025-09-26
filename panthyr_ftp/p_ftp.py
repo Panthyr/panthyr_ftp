@@ -367,12 +367,12 @@ class pFTP:
             self.log.debug(f'[CWD] Current directory before change: {current_dir}')
 
             self.log.debug(f'[CWD] Preparing/changing to main directory: {target_dir_checked}')
-            # self._prep_dir(target_dir_checked)
+            self._prep_dir(target_dir_checked)
             self.ftp.chdir(target_dir_checked)
 
             year_str = current_year_str()
             self.log.debug(f'[CWD] Preparing/changing to year subdirectory: {year_str}')
-            # self._prep_dir(year_str)
+            self._prep_dir(year_str)
             self.ftp.chdir(year_str)
 
             final_dir = self.ftp.getcwd()
