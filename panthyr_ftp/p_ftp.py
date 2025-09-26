@@ -72,12 +72,21 @@ def retry_on_connection_error(max_retries: int = MAX_RETRIES, base_delay: float 
             last_exception = None
 
             for attempt in range(max_retries + 1):  # +1 for initial attempt
+                self.log.debug(
+                    f'[RETRY_DECORATOR] Attempt {attempt + 1}/{max_retries + 1} for {func.__name__}'
+                )
                 try:
                     # Check if connection is healthy before attempting operation
                     if hasattr(self, 'ftp') and self.ftp and hasattr(self, '_check_connection'):
+                        self.log.debug(
+                            f'[RETRY_DECORATOR] Checking connection health before {func.__name__}'
+                        )
                         self._check_connection()
 
-                    return func(self, *args, **kwargs)
+                    self.log.debug(f'[RETRY_DECORATOR] Executing {func.__name__}')
+                    result = func(self, *args, **kwargs)
+                    self.log.debug(f'[RETRY_DECORATOR] {func.__name__} completed successfully')
+                    return result
 
                 except (
                     ftputil.error.FTPError,
@@ -89,11 +98,14 @@ def retry_on_connection_error(max_retries: int = MAX_RETRIES, base_delay: float 
                     socket.gaierror,
                 ) as e:
                     last_exception = e
+                    self.log.debug(
+                        f'[RETRY_DECORATOR] Exception caught in {func.__name__}: {type(e).__name__}: {e}'
+                    )
 
                     if attempt < max_retries:
                         delay = base_delay * (2**attempt)  # Exponential backoff
                         self.log.warning(
-                            f'Connection error in {func.__name__} (attempt {attempt + 1}/'
+                            f'[RETRY_DECORATOR] Connection error in {func.__name__} (attempt {attempt + 1}/'
                             f'{max_retries + 1}): {e}. '
                             f'Retrying in {delay}s...'
                         )
@@ -101,14 +113,20 @@ def retry_on_connection_error(max_retries: int = MAX_RETRIES, base_delay: float 
                         # Attempt to reconnect if connection is lost
                         if hasattr(self, '_reconnect'):
                             try:
+                                self.log.debug(
+                                    f'[RETRY_DECORATOR] Attempting reconnection after {func.__name__} failure'
+                                )
                                 self._reconnect()
                             except Exception as reconnect_error:
-                                self.log.debug(f'Reconnection attempt failed: {reconnect_error}')
+                                self.log.debug(
+                                    f'[RETRY_DECORATOR] Reconnection attempt failed: {reconnect_error}'
+                                )
 
+                        self.log.debug(f'[RETRY_DECORATOR] Sleeping {delay}s before retry')
                         time.sleep(delay)
                     else:
                         self.log.error(
-                            f'Operation {func.__name__} failed after {max_retries + 1} attempts: {e}'
+                            f'[RETRY_DECORATOR] Operation {func.__name__} failed after {max_retries + 1} attempts: {e}'
                         )
                         raise last_exception
 
@@ -224,28 +242,35 @@ class pFTP:
         Raises:
             ftputil.error.FTPError: if connection fails.
         """
+        self.log.debug(f'[LOGIN] Starting login process to {self.server}')
         try:
+            self.log.debug(f'[LOGIN] Creating FTPHost connection to {self.server}')
             # ftputil.FTPHost automatically handles login during connection
             self.ftp = ftputil.FTPHost(self.server, self.user, self.pw)
-            self.log.debug(f'Successfully connected to {self.server}')
+            self.log.debug(f'[LOGIN] Successfully connected to {self.server}')
 
             # Set timeout if supported
+            self.log.debug(f'[LOGIN] Setting timeout to {self.timeout}s')
             if hasattr(self.ftp, 'set_timeout'):
                 self.ftp.set_timeout(self.timeout)
+                self.log.debug(f'[LOGIN] Timeout set successfully')
 
             # Log current working directory after login
+            self.log.debug(f'[LOGIN] Getting initial working directory')
             try:
                 current_dir = self.ftp.getcwd()
+                self.log.debug(f'[LOGIN] Initial working directory: {current_dir}')
             except Exception as e:
-                self.log.debug(f'Could not get initial working directory: {e}')
+                self.log.debug(f'[LOGIN] Could not get initial working directory: {e}')
 
-        except (ftputil.error.FTPError, OSError, socket.gaierror):
-            self.log.exception(f'Failed to connect/log in to {self.server}', exc_info=True)
+        except (ftputil.error.FTPError, OSError, socket.gaierror) as e:
+            self.log.error(f'[LOGIN] Failed to connect/log in to {self.server}: {e}')
             self._connection_lost = True
-            raise FTPCannotLoginError
+            raise FTPCannotLoginError from e
         else:
             self._connection_lost = False
             self._last_connection_check = time.time()
+            self.log.debug(f'[LOGIN] Login process completed successfully')
 
     def _check_connection(self) -> bool:
         """Check if FTP connection is still healthy.
@@ -253,42 +278,59 @@ class pFTP:
         Returns:
             bool: True if connection is healthy, False otherwise
         """
+        self.log.debug('[CHECK_CONNECTION] Starting connection health check')
         current_time = time.time()
 
         # Only check periodically to avoid overhead
-        if current_time - self._last_connection_check < CONNECTION_CHECK_INTERVAL:
+        time_since_last_check = current_time - self._last_connection_check
+        if time_since_last_check < CONNECTION_CHECK_INTERVAL:
+            self.log.debug(
+                f'[CHECK_CONNECTION] Skipping check, last check was {time_since_last_check:.1f}s ago'
+            )
             return not self._connection_lost
 
-        self.log.debug('Performing connection health check...')
+        self.log.debug('[CHECK_CONNECTION] Performing connection health check...')
 
         try:
             if self.ftp:
+                self.log.debug('[CHECK_CONNECTION] Testing connection with getcwd()')
                 # Try a simple operation to test connection
-                self.ftp.getcwd()
+                current_dir = self.ftp.getcwd()
+                self.log.debug(
+                    f'[CHECK_CONNECTION] Connection test successful, current dir: {current_dir}'
+                )
                 self._connection_lost = False
                 self._last_connection_check = current_time
                 return True
+            else:
+                self.log.debug('[CHECK_CONNECTION] No FTP connection object exists')
+                self._connection_lost = True
         except Exception as e:
-            self.log.warning(f'Connection health check failed: {e}')
+            self.log.warning(f'[CHECK_CONNECTION] Connection health check failed: {e}')
             self._connection_lost = True
 
         return False
 
     def _reconnect(self) -> None:
         """Attempt to reconnect to the FTP server."""
-        self.log.info(f'Attempting to reconnect to {self.server}...')
+        self.log.info(f'[RECONNECT] Attempting to reconnect to {self.server}...')
 
         # Close existing connection if any
         if self.ftp:
+            self.log.debug('[RECONNECT] Closing existing FTP connection')
             try:
                 self.ftp.close()
-            except Exception:  # noqa: S110
-                pass  # Ignore errors when closing broken connection
+                self.log.debug('[RECONNECT] Existing connection closed successfully')
+            except Exception as e:  # noqa: S110
+                self.log.debug(f'[RECONNECT] Error closing existing connection (ignored): {e}')
             finally:
                 self.ftp = None
+                self.log.debug('[RECONNECT] FTP connection object set to None')
 
         # Attempt fresh login
+        self.log.debug('[RECONNECT] Attempting fresh login')
         self.login()
+        self.log.debug('[RECONNECT] Reconnection completed successfully')
 
     @retry_on_connection_error()
     def cwd(self, target_dir: str) -> None:
@@ -299,27 +341,32 @@ class pFTP:
         Args:
             target_dir (str): directory to change to.
         """
+        self.log.debug(f'[CWD] Changing to directory: {target_dir}')
         target_dir_checked = re.sub('[^0-9a-zA-Z_]+', '_', target_dir)
         if target_dir_checked != target_dir:
             self.log.warning(
-                f'Invalid characters in directory name. Replaced [{target_dir}] '
+                f'[CWD] Invalid characters in directory name. Replaced [{target_dir}] '
                 f'with [{target_dir_checked}].'
             )
 
         try:
             current_dir = self.ftp.getcwd()
+            self.log.debug(f'[CWD] Current directory before change: {current_dir}')
 
+            self.log.debug(f'[CWD] Preparing/changing to main directory: {target_dir_checked}')
             self._prep_dir(target_dir_checked)
             self.ftp.chdir(target_dir_checked)
 
             year_str = current_year_str()
+            self.log.debug(f'[CWD] Preparing/changing to year subdirectory: {year_str}')
             self._prep_dir(year_str)
             self.ftp.chdir(year_str)
 
             final_dir = self.ftp.getcwd()
+            self.log.debug(f'[CWD] Successfully changed to final directory: {final_dir}')
 
         except (ftputil.error.FTPError, OSError) as e:
-            self.log.exception(f'Could not change directory to [{target_dir}]: {e}')
+            self.log.error(f'[CWD] Could not change directory to [{target_dir}]: {e}')
             raise FTPError from e
 
     def _prep_dir(self, dir_name: str) -> None:
@@ -328,10 +375,13 @@ class pFTP:
         Args:
             dir_name (str): subdirectory to check/create
         """
+        self.log.debug(f'[PREP_DIR] Checking if directory exists: {dir_name}')
         if not self.ftp.path.isdir(dir_name):
-            self.log.debug(f'Directory [{dir_name}] does not exist, creating...')
+            self.log.debug(f'[PREP_DIR] Directory [{dir_name}] does not exist, creating...')
             self.ftp.mkdir(dir_name)
-            self.log.debug(f'Successfully created directory: {dir_name}')
+            self.log.debug(f'[PREP_DIR] Successfully created directory: {dir_name}')
+        else:
+            self.log.debug(f'[PREP_DIR] Directory [{dir_name}] already exists')
 
     def _temp_cwd(self, target_dir: Union[str, None]) -> Union[str, None]:
         """Temporarily change the working directory.
@@ -403,44 +453,67 @@ class pFTP:
             local_file: Path to local file to upload
             remote_file: Target filename on remote server
         """
+        self.log.debug(f'[SPEED_LIMITED_UPLOAD] Starting upload from {local_file} to {remote_file}')
         chunk_size = self.upload_chunk_size
         speed_limit_bytes_per_sec = (
             self.upload_speed_limit_kbps * 1024 if self.upload_speed_limit_kbps else None
         )
 
         self.log.debug(
-            f'Starting upload: chunk_size={chunk_size}, '
+            f'[SPEED_LIMITED_UPLOAD] Parameters: chunk_size={chunk_size}, '
             f'speed_limit={self.upload_speed_limit_kbps} kB/s'
         )
 
-        with open(local_file, 'rb') as local_fp, self.ftp.open(remote_file, 'wb') as remote_fp:
-            bytes_transferred = 0
-            start_time = time.time()
+        self.log.debug(f'[SPEED_LIMITED_UPLOAD] Opening local file: {local_file}')
+        with open(local_file, 'rb') as local_fp:
+            self.log.debug(f'[SPEED_LIMITED_UPLOAD] Opening remote file for writing: {remote_file}')
+            with self.ftp.open(remote_file, 'wb') as remote_fp:
+                bytes_transferred = 0
+                start_time = time.time()
+                chunk_count = 0
 
-            while True:
-                chunk_start_time = time.time()
-                chunk = local_fp.read(chunk_size)
+                self.log.debug('[SPEED_LIMITED_UPLOAD] Starting chunk transfer loop')
+                while True:
+                    chunk_start_time = time.time()
+                    self.log.debug(
+                        f'[SPEED_LIMITED_UPLOAD] Reading chunk {chunk_count + 1}, size {chunk_size}'
+                    )
+                    chunk = local_fp.read(chunk_size)
 
-                if not chunk:
-                    break
+                    if not chunk:
+                        self.log.debug('[SPEED_LIMITED_UPLOAD] End of file reached, breaking loop')
+                        break
 
-                remote_fp.write(chunk)
-                bytes_transferred += len(chunk)
+                    chunk_count += 1
+                    self.log.debug(
+                        f'[SPEED_LIMITED_UPLOAD] Writing chunk {chunk_count}, size {len(chunk)} bytes'
+                    )
+                    remote_fp.write(chunk)
+                    bytes_transferred += len(chunk)
 
-                # Apply speed limiting if configured
-                if speed_limit_bytes_per_sec:
-                    chunk_transfer_time = time.time() - chunk_start_time
-                    expected_time = len(chunk) / speed_limit_bytes_per_sec
+                    # Apply speed limiting if configured
+                    if speed_limit_bytes_per_sec:
+                        chunk_transfer_time = time.time() - chunk_start_time
+                        expected_time = len(chunk) / speed_limit_bytes_per_sec
 
-                    if chunk_transfer_time < expected_time:
-                        sleep_time = expected_time - chunk_transfer_time
-                        time.sleep(sleep_time)
+                        if chunk_transfer_time < expected_time:
+                            sleep_time = expected_time - chunk_transfer_time
+                            self.log.debug(
+                                f'[SPEED_LIMITED_UPLOAD] Speed limiting: sleeping {sleep_time:.3f}s'
+                            )
+                            time.sleep(sleep_time)
+
+                    if chunk_count % 100 == 0:  # Log progress every 100 chunks
+                        self.log.debug(
+                            f'[SPEED_LIMITED_UPLOAD] Progress: {chunk_count} chunks, {format_file_size(bytes_transferred)} transferred'
+                        )
 
             total_time = time.time() - start_time
             if total_time > 0:
                 actual_speed_kbps = (bytes_transferred / 1024) / total_time
                 self.log.debug(
-                    f'Upload completed. Transferred: {format_file_size(bytes_transferred)}, '
+                    f'[SPEED_LIMITED_UPLOAD] Upload completed. Chunks: {chunk_count}, '
+                    f'Transferred: {format_file_size(bytes_transferred)}, '
                     f'Time: {total_time:.1f}s, Avg speed: {actual_speed_kbps:.1f} kB/s'
                 )
 
@@ -479,41 +552,70 @@ class pFTP:
             FileExistsOnServer: target file exists on server and overwrite == False
             UploadFailed: issue during upload, verification, or atomic rename operation
         """
+        self.log.debug(f'[UPLOAD_FILE] Starting upload for file: {file}')
         if not os.path.isfile(file):
             msg = f'File {file} does not exist.'
+            self.log.error(f'[UPLOAD_FILE] {msg}')
             raise ValueError(msg)
 
         # initial_dir = self._temp_cwd(target_dir)
         if not target_filename:
             target_filename = os.path.basename(file)
-        if not overwrite and self._file_exists(target_filename):
-            raise FTPFileExistsOnServer
+        self.log.debug(f'[UPLOAD_FILE] Target filename: {target_filename}, overwrite: {overwrite}')
+
+        if not overwrite:
+            self.log.debug('[UPLOAD_FILE] Checking if file exists on server (overwrite=False)')
+            if self._file_exists(target_filename):
+                self.log.warning(
+                    f'[UPLOAD_FILE] File {target_filename} already exists and overwrite=False'
+                )
+                raise FTPFileExistsOnServer
 
         # Enhanced upload with progress tracking and verification
         # Use atomic upload: upload to temporary name, then rename to final name
         temp_filename = 'uploading.now'
+        self.log.debug(
+            f'[UPLOAD_FILE] Using atomic upload with temporary filename: {temp_filename}'
+        )
 
         try:
             # Get local file size for verification and progress tracking
+            self.log.debug(f'[UPLOAD_FILE] Getting local file size for {file}')
             local_size = os.path.getsize(file)
+            self.log.debug(f'[UPLOAD_FILE] Local file size: {format_file_size(local_size)}')
 
             # For unstable connections, use multiple verification steps
             upload_attempts = 0
             max_upload_attempts = 2  # Allow one retry for upload itself
+            self.log.debug(
+                f'[UPLOAD_FILE] Starting upload loop, max attempts: {max_upload_attempts}'
+            )
 
             while upload_attempts < max_upload_attempts:
                 upload_attempts += 1
+                self.log.debug(
+                    f'[UPLOAD_FILE] === Upload attempt {upload_attempts}/{max_upload_attempts} ==='
+                )
 
                 try:
-                    self.log.debug(f'Upload attempt {upload_attempts}/{max_upload_attempts}')
-
                     # Clean up any existing temporary file first
+                    self.log.debug(
+                        f'[UPLOAD_FILE] Checking for existing temp file: {temp_filename}'
+                    )
                     if self._file_exists(temp_filename):
+                        self.log.debug(
+                            f'[UPLOAD_FILE] Removing existing temp file: {temp_filename}'
+                        )
                         self.ftp.remove(temp_filename)
 
                     # Perform the upload with speed limiting to temporary filename
+                    self.log.debug(
+                        f'[UPLOAD_FILE] Starting speed-limited upload to {temp_filename}'
+                    )
                     self._speed_limited_upload(file, temp_filename)
-                    self.log.debug(f'Upload command completed for temporary file {temp_filename}')
+                    self.log.debug(
+                        f'[UPLOAD_FILE] Upload command completed for temporary file {temp_filename}'
+                    )
 
                     # Size verification with retry on temporary file
                     remote_size = None
@@ -630,7 +732,9 @@ class pFTP:
         Returns:
             bool: True if file exists, False otherwise
         """
+        self.log.debug(f'[FILE_EXISTS] Checking if file exists: {file}')
         exists = self.ftp.path.isfile(file)
+        self.log.debug(f'[FILE_EXISTS] File {file} exists: {exists}')
         return exists
 
     @retry_on_connection_error()
@@ -643,11 +747,13 @@ class pFTP:
         Returns:
             Union[int, None]: file size in bytes or None if not successful.
         """
+        self.log.debug(f'[GET_SIZE] Getting size for file: {file}')
         try:
             size = self.ftp.path.getsize(file)
+            self.log.debug(f'[GET_SIZE] File {file} size: {format_file_size(size)}')
             return size
         except (ftputil.error.FTPError, OSError) as e:
-            self.log.debug(f'Could not get size of {file}: {e}')
+            self.log.debug(f'[GET_SIZE] Could not get size of {file}: {e}')
             return None
 
     def quit(self) -> None:
@@ -657,16 +763,19 @@ class pFTP:
         if the server responds with an error to the QUIT command.
         This renders the FTP instance useless for subsequent calls.
         """
+        self.log.debug('[QUIT] Starting FTP connection close process')
         if self.ftp:
-            self.log.debug(f'Closing FTP connection to {self.server}')
+            self.log.debug(f'[QUIT] Closing FTP connection to {self.server}')
             try:
                 self.ftp.close()
+                self.log.debug('[QUIT] FTP connection closed successfully')
             except Exception as e:
-                self.log.warning(f'Exception occurred while closing FTP connection: {e}')
+                self.log.warning(f'[QUIT] Exception occurred while closing FTP connection: {e}')
             finally:
                 self.ftp = None
+                self.log.debug('[QUIT] FTP connection object set to None')
         else:
-            self.log.debug('No FTP connection to close')
+            self.log.debug('[QUIT] No FTP connection to close')
 
 
 def enable_debug_logging():
