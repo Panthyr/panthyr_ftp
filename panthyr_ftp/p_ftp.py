@@ -512,9 +512,9 @@ class pFTP:
                 self.log.debug('[SPEED_LIMITED_UPLOAD] Starting chunk transfer loop')
                 while True:
                     chunk_start_time = time.time()
-                    self.log.debug(
-                        f'[SPEED_LIMITED_UPLOAD] Reading chunk {chunk_count + 1}, size {chunk_size}'
-                    )
+                    # self.log.debug(
+                    #     f'[SPEED_LIMITED_UPLOAD] Reading chunk {chunk_count + 1}, size {chunk_size}'
+                    # )
                     chunk = local_fp.read(chunk_size)
 
                     if not chunk:
@@ -522,9 +522,9 @@ class pFTP:
                         break
 
                     chunk_count += 1
-                    self.log.debug(
-                        f'[SPEED_LIMITED_UPLOAD] Writing chunk {chunk_count}, size {len(chunk)} bytes'
-                    )
+                    # self.log.debug(
+                    #     f'[SPEED_LIMITED_UPLOAD] Writing chunk {chunk_count}, size {len(chunk)} bytes'
+                    # )
                     remote_fp.write(chunk)
                     bytes_transferred += len(chunk)
 
@@ -535,9 +535,9 @@ class pFTP:
 
                         if chunk_transfer_time < expected_time:
                             sleep_time = expected_time - chunk_transfer_time
-                            self.log.debug(
-                                f'[SPEED_LIMITED_UPLOAD] Speed limiting: sleeping {sleep_time:.3f}s'
-                            )
+                            # self.log.debug(
+                            #     f'[SPEED_LIMITED_UPLOAD] Speed limiting: sleeping {sleep_time:.3f}s'
+                            # )
                             time.sleep(sleep_time)
 
                     if chunk_count % 100 == 0:  # Log progress every 100 chunks
