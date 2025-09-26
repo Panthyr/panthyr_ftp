@@ -249,6 +249,19 @@ class pFTP:
             self.ftp = ftputil.FTPHost(self.server, self.user, self.pw)
             self.log.debug(f'[LOGIN] Successfully connected to {self.server}')
 
+            # Enable passive mode for better firewall/NAT compatibility
+            self.log.debug('[LOGIN] Enabling passive mode')
+            # Access the underlying ftplib connection to set passive mode
+            # ftputil uses _session for the control connection
+            try:
+                if hasattr(self.ftp, '_session'):
+                    self.ftp._session.set_pasv(True)
+                    self.log.debug('[LOGIN] Passive mode enabled successfully via _session')
+                else:
+                    self.log.warning('[LOGIN] Could not access _session to set passive mode')
+            except AttributeError as e:
+                self.log.warning(f'[LOGIN] Could not set passive mode: {e}')
+
             # Set timeout if supported
             self.log.debug(f'[LOGIN] Setting timeout to {self.timeout}s')
             if hasattr(self.ftp, 'set_timeout'):
@@ -354,12 +367,12 @@ class pFTP:
             self.log.debug(f'[CWD] Current directory before change: {current_dir}')
 
             self.log.debug(f'[CWD] Preparing/changing to main directory: {target_dir_checked}')
-            self._prep_dir(target_dir_checked)
+            # self._prep_dir(target_dir_checked)
             self.ftp.chdir(target_dir_checked)
 
             year_str = current_year_str()
             self.log.debug(f'[CWD] Preparing/changing to year subdirectory: {year_str}')
-            self._prep_dir(year_str)
+            # self._prep_dir(year_str)
             self.ftp.chdir(year_str)
 
             final_dir = self.ftp.getcwd()
