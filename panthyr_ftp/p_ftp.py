@@ -356,6 +356,20 @@ class pFTP:
         self.login()
         self.log.debug('[RECONNECT] Reconnection completed successfully')
 
+    def _ensure_binary_mode(self) -> None:
+        """Ensure the connection is in binary mode.
+
+        This is important because some FTP commands (like retrlines for LIST)
+        automatically switch to ASCII mode and don't switch back.
+        """
+        try:
+            if self.ftp and hasattr(self.ftp, '_session'):
+                self.log.debug('[ENSURE_BINARY] Setting binary transfer mode')
+                self.ftp._session.voidcmd('TYPE I')  # TYPE I = binary mode
+                self.log.debug('[ENSURE_BINARY] Binary mode confirmed')
+        except (ftputil.error.FTPError, OSError) as e:
+            self.log.warning(f'[ENSURE_BINARY] Could not ensure binary mode: {e}')
+
     @retry_on_connection_error()
     def cwd(self, target_dir: str) -> None:
         """Change the working directory on the server.
@@ -465,6 +479,9 @@ class pFTP:
                 # Get detailed listing
                 lines = []
                 self.ftp._session.retrlines('LIST', lines.append)
+
+                # Restore binary mode after retrlines (which switches to ASCII)
+                self._ensure_binary_mode()
 
                 for line in lines:
                     # Parse LIST output - first character indicates type
@@ -812,30 +829,25 @@ class pFTP:
         """
         self.log.debug(f'[GET_SIZE] Getting size for file: {file}')
         try:
-            # First try SIZE command, but fall back to LIST parsing if not supported
-            try:
-                size = self.ftp._session.size(file)
-                self.log.debug(f'[GET_SIZE] File {file} size via SIZE: {format_file_size(size)}')
-                return size
-            except (ftputil.error.FTPError, OSError) as size_error:
-                self.log.debug(f'[GET_SIZE] SIZE command failed: {size_error}, trying LIST parsing')
+            # Use LIST command directly to avoid SIZE command issues in ASCII mode
+            self.log.debug(f'[GET_SIZE] Using LIST command for file: {file}')
+            lines = []
+            self.ftp._session.retrlines(f'LIST {file}', lines.append)
 
-                # Fall back to parsing LIST output
-                lines = []
-                try:
-                    self.ftp._session.retrlines(f'LIST {file}', lines.append)
-                    if lines:
-                        # Parse the LIST line to extract file size
-                        parts = lines[0].split()
-                        if len(parts) >= 5 and parts[0].startswith('-'):  # Regular file
-                            size = int(parts[4])  # Size is typically the 5th field
-                            self.log.debug(
-                                f'[GET_SIZE] File {file} size via LIST: {format_file_size(size)}'
-                            )
-                            return size
-                except (ftputil.error.FTPError, OSError, ValueError) as list_error:
-                    self.log.debug(f'[GET_SIZE] LIST parsing also failed: {list_error}')
+            # Restore binary mode after retrlines (which switches to ASCII)
+            self._ensure_binary_mode()
 
+            if lines:
+                # Parse the LIST line to extract file size
+                parts = lines[0].split()
+                if len(parts) >= 5 and parts[0].startswith('-'):  # Regular file
+                    size = int(parts[4])  # Size is typically the 5th field
+                    self.log.debug(
+                        f'[GET_SIZE] File {file} size via LIST: {format_file_size(size)}'
+                    )
+                    return size
+
+            self.log.debug(f'[GET_SIZE] Could not parse file size from LIST output')
             return None
         except (ftputil.error.FTPError, OSError) as e:
             self.log.debug(f'[GET_SIZE] Could not get size of {file}: {e}')
