@@ -23,7 +23,6 @@ import os
 import re
 import signal
 import socket
-import threading
 import time
 from datetime import datetime as dt
 from functools import wraps
@@ -148,7 +147,9 @@ class TimeoutError(Exception):
 
 
 def timeout_operation(timeout_seconds: int = FTP_OPERATION_TIMEOUT):
-    """Decorator to add timeout to FTP operations using threading.
+    """Decorator to add timeout to FTP operations using signal (Unix) or polling approach.
+
+    This implementation avoids threading to maintain SQLite compatibility.
 
     Args:
         timeout_seconds: Maximum time to wait for operation completion
@@ -160,34 +161,56 @@ def timeout_operation(timeout_seconds: int = FTP_OPERATION_TIMEOUT):
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
-            result = [None]  # Use list to store result (mutable)
-            exception = [None]  # Store any exception that occurs
+            # Try to use signal-based timeout on Unix systems
+            if hasattr(signal, 'SIGALRM'):
 
-            def target():
-                try:
-                    result[0] = func(*args, **kwargs)
-                except Exception as e:
-                    exception[0] = e
-
-            thread = threading.Thread(target=target)
-            thread.daemon = True  # Dies when main thread dies
-            thread.start()
-            thread.join(timeout_seconds)
-
-            if thread.is_alive():
-                # Operation timed out - log and raise timeout error
-                if hasattr(args[0], 'log'):  # Check if first arg has logging
-                    args[0].log.warning(
-                        f'[TIMEOUT] {func.__name__} timed out after {timeout_seconds}s'
+                def timeout_handler(signum, frame):
+                    raise TimeoutError(
+                        f'{func.__name__} operation timed out after {timeout_seconds} seconds'
                     )
-                raise TimeoutError(
-                    f'{func.__name__} operation timed out after {timeout_seconds} seconds'
-                )
 
-            if exception[0]:
-                raise exception[0]
+                # Set up signal handler
+                old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+                signal.alarm(timeout_seconds)
 
-            return result[0]
+                try:
+                    result = func(*args, **kwargs)
+                    signal.alarm(0)  # Cancel the alarm
+                    return result
+                except TimeoutError:
+                    if hasattr(args[0], 'log'):  # Check if first arg has logging
+                        args[0].log.warning(
+                            f'[TIMEOUT] {func.__name__} timed out after {timeout_seconds}s'
+                        )
+                    raise
+                finally:
+                    signal.alarm(0)  # Ensure alarm is cancelled
+                    signal.signal(signal.SIGALRM, old_handler)  # Restore old handler
+            else:
+                # Fallback for Windows: set socket timeout on underlying FTP connection
+                try:
+                    # Try to set timeout on the underlying socket if available
+                    if hasattr(args[0], 'ftp') and args[0].ftp and hasattr(args[0].ftp, '_session'):
+                        old_timeout = args[0].ftp._session.sock.gettimeout()
+                        args[0].ftp._session.sock.settimeout(timeout_seconds)
+                        try:
+                            result = func(*args, **kwargs)
+                            return result
+                        finally:
+                            # Restore original timeout
+                            if old_timeout is not None:
+                                args[0].ftp._session.sock.settimeout(old_timeout)
+                    else:
+                        # No socket access, just run the function normally
+                        return func(*args, **kwargs)
+                except socket.timeout:
+                    if hasattr(args[0], 'log'):
+                        args[0].log.warning(
+                            f'[TIMEOUT] {func.__name__} timed out after {timeout_seconds}s'
+                        )
+                    raise TimeoutError(
+                        f'{func.__name__} operation timed out after {timeout_seconds} seconds'
+                    )
 
         return wrapper
 
