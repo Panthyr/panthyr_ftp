@@ -13,6 +13,7 @@ __all__ = [
     'pFTP',
     'FTPFileExistsOnServer',
     'FTPUploadFailed',
+    'TimeoutError',
     'enable_debug_logging',
     'test_connection_stability',
 ]
@@ -20,7 +21,9 @@ __all__ = [
 import logging
 import os
 import re
+import signal
 import socket
+import threading
 import time
 from datetime import datetime as dt
 from functools import wraps
@@ -33,6 +36,7 @@ TIMEOUTDEFAULT = 20  # FTP server timeout
 MAX_RETRIES = 2  # Maximum number of retry attempts for unstable connections
 RETRY_DELAY_BASE = 2  # Base delay in seconds for exponential backoff
 CONNECTION_CHECK_INTERVAL = 30  # Seconds between connection health checks
+FTP_OPERATION_TIMEOUT = 30  # Timeout for individual FTP operations in seconds
 
 
 def current_year_str() -> str:
@@ -131,6 +135,59 @@ def retry_on_connection_error(max_retries: int = MAX_RETRIES, base_delay: float 
                         raise last_exception
 
             return None  # Should never reach here
+
+        return wrapper
+
+    return decorator
+
+
+class TimeoutError(Exception):
+    """Raised when an FTP operation times out."""
+
+    pass
+
+
+def timeout_operation(timeout_seconds: int = FTP_OPERATION_TIMEOUT):
+    """Decorator to add timeout to FTP operations using threading.
+
+    Args:
+        timeout_seconds: Maximum time to wait for operation completion
+
+    Returns:
+        Decorated function that will timeout if it takes too long
+    """
+
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            result = [None]  # Use list to store result (mutable)
+            exception = [None]  # Store any exception that occurs
+
+            def target():
+                try:
+                    result[0] = func(*args, **kwargs)
+                except Exception as e:
+                    exception[0] = e
+
+            thread = threading.Thread(target=target)
+            thread.daemon = True  # Dies when main thread dies
+            thread.start()
+            thread.join(timeout_seconds)
+
+            if thread.is_alive():
+                # Operation timed out - log and raise timeout error
+                if hasattr(args[0], 'log'):  # Check if first arg has logging
+                    args[0].log.warning(
+                        f'[TIMEOUT] {func.__name__} timed out after {timeout_seconds}s'
+                    )
+                raise TimeoutError(
+                    f'{func.__name__} operation timed out after {timeout_seconds} seconds'
+                )
+
+            if exception[0]:
+                raise exception[0]
+
+            return result[0]
 
         return wrapper
 
@@ -453,6 +510,7 @@ class pFTP:
         return self.ftp.getcwd()
 
     @retry_on_connection_error()
+    @timeout_operation(45)  # 45 second timeout for directory listing (can be slow)
     def get_contents(self, directory='.') -> List[List[str]]:
         """Return files and subdirectories of directory on server.
 
@@ -788,6 +846,7 @@ class pFTP:
         # self._temp_cwd(initial_dir)
 
     @retry_on_connection_error()
+    @timeout_operation(30)  # 30 second timeout for file existence checks
     def _file_exists(self, file: str) -> bool:
         """Check if file exists in current directory.
 
@@ -818,6 +877,7 @@ class pFTP:
         return exists
 
     @retry_on_connection_error()
+    @timeout_operation(30)  # 30 second timeout for getting file size
     def get_size(self, file: str) -> Union[int, None]:
         """Get size of file on server.
 
