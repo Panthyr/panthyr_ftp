@@ -224,7 +224,6 @@ class pFTP:
         Raises:
             ftputil.error.FTPError: if connection fails.
         """
-        self.log.debug(f'Attempting to connect to FTP server: {self.server}')
         try:
             # ftputil.FTPHost automatically handles login during connection
             self.ftp = ftputil.FTPHost(self.server, self.user, self.pw)
@@ -233,12 +232,10 @@ class pFTP:
             # Set timeout if supported
             if hasattr(self.ftp, 'set_timeout'):
                 self.ftp.set_timeout(self.timeout)
-                self.log.debug(f'Set FTP timeout to {self.timeout} seconds')
 
             # Log current working directory after login
             try:
                 current_dir = self.ftp.getcwd()
-                self.log.debug(f'Initial working directory: {current_dir}')
             except Exception as e:
                 self.log.debug(f'Could not get initial working directory: {e}')
 
@@ -270,7 +267,6 @@ class pFTP:
                 self.ftp.getcwd()
                 self._connection_lost = False
                 self._last_connection_check = current_time
-                self.log.debug('Connection health check passed')
                 return True
         except Exception as e:
             self.log.warning(f'Connection health check failed: {e}')
@@ -303,7 +299,6 @@ class pFTP:
         Args:
             target_dir (str): directory to change to.
         """
-        self.log.debug(f'Changing to directory: {target_dir}')
         target_dir_checked = re.sub('[^0-9a-zA-Z_]+', '_', target_dir)
         if target_dir_checked != target_dir:
             self.log.warning(
@@ -313,19 +308,15 @@ class pFTP:
 
         try:
             current_dir = self.ftp.getcwd()
-            self.log.debug(f'Current working directory before change: {current_dir}')
 
             self._prep_dir(target_dir_checked)
             self.ftp.chdir(target_dir_checked)
-            self.log.debug(f'Changed to directory: {target_dir_checked}')
 
             year_str = current_year_str()
-            self.log.debug(f'Now changing to year subdirectory: {year_str}')
             self._prep_dir(year_str)
             self.ftp.chdir(year_str)
 
             final_dir = self.ftp.getcwd()
-            self.log.debug(f'Final working directory: {final_dir}')
 
         except (ftputil.error.FTPError, OSError) as e:
             self.log.exception(f'Could not change directory to [{target_dir}]: {e}')
@@ -337,13 +328,10 @@ class pFTP:
         Args:
             dir_name (str): subdirectory to check/create
         """
-        self.log.debug(f'Checking if directory exists: {dir_name}')
         if not self.ftp.path.isdir(dir_name):
             self.log.debug(f'Directory [{dir_name}] does not exist, creating...')
             self.ftp.mkdir(dir_name)
             self.log.debug(f'Successfully created directory: {dir_name}')
-        else:
-            self.log.debug(f'Directory [{dir_name}] already exists')
 
     def _temp_cwd(self, target_dir: Union[str, None]) -> Union[str, None]:
         """Temporarily change the working directory.
@@ -385,22 +373,18 @@ class pFTP:
                 second containing all files.
                 Both are empty if there are no files/directories
         """
-        self.log.debug(f'Getting contents of directory: {directory}')
         ret: List[List[str]] = [[], []]
 
         try:
             # Get all entries in the directory
             entries = self.ftp.listdir(directory)
-            self.log.debug(f'Found {len(entries)} entries in directory {directory}: {entries}')
 
             for entry in entries:
                 full_path = self.ftp.path.join(directory, entry) if directory != '.' else entry
                 if self.ftp.path.isdir(full_path):
                     ret[0].append(entry)
-                    self.log.debug(f'  Directory: {entry}')
                 else:
                     ret[1].append(entry)
-                    self.log.debug(f'  File: {entry}')
 
             self.log.debug(
                 f'Directory scan complete. Found {len(ret[0])} dirs, {len(ret[1])} files'
@@ -425,7 +409,7 @@ class pFTP:
         )
 
         self.log.debug(
-            f'Starting speed-limited upload: chunk_size={chunk_size}, '
+            f'Starting upload: chunk_size={chunk_size}, '
             f'speed_limit={self.upload_speed_limit_kbps} kB/s'
         )
 
@@ -508,14 +492,10 @@ class pFTP:
         # Enhanced upload with progress tracking and verification
         # Use atomic upload: upload to temporary name, then rename to final name
         temp_filename = 'uploading.now'
-        self.log.debug(
-            f'Starting atomic upload of {file} as {target_filename} (via {temp_filename})'
-        )
 
         try:
             # Get local file size for verification and progress tracking
             local_size = os.path.getsize(file)
-            self.log.debug(f'Local file size: {format_file_size(local_size)}')
 
             # For unstable connections, use multiple verification steps
             upload_attempts = 0
@@ -562,9 +542,6 @@ class pFTP:
                             try:
                                 # Remove target file if it exists (for overwrite)
                                 if self._file_exists(target_filename):
-                                    self.log.debug(
-                                        f'Removing existing target file: {target_filename}'
-                                    )
                                     self.ftp.remove(target_filename)
 
                                 # Rename temporary file to final name
@@ -628,7 +605,6 @@ class pFTP:
             try:
                 if self._file_exists(temp_filename):
                     self.ftp.remove(temp_filename)
-                    self.log.debug('Cleaned up temporary file after FTP upload failure')
             except Exception:
                 pass  # Don't fail on cleanup errors
             raise  # Re-raise FTP upload failures
@@ -648,9 +624,7 @@ class pFTP:
         Returns:
             bool: True if file exists, False otherwise
         """
-        self.log.debug(f'Checking if file exists: {file}')
         exists = self.ftp.path.isfile(file)
-        self.log.debug(f'File {file} exists: {exists}')
         return exists
 
     @retry_on_connection_error()
@@ -663,10 +637,8 @@ class pFTP:
         Returns:
             Union[int, None]: file size in bytes or None if not successful.
         """
-        self.log.debug(f'Getting size of remote file: {file}')
         try:
             size = self.ftp.path.getsize(file)
-            self.log.debug(f'Remote file {file} size: {format_file_size(size)}')
             return size
         except (ftputil.error.FTPError, OSError) as e:
             self.log.debug(f'Could not get size of {file}: {e}')
@@ -683,7 +655,6 @@ class pFTP:
             self.log.debug(f'Closing FTP connection to {self.server}')
             try:
                 self.ftp.close()
-                self.log.debug('FTP connection closed successfully')
             except Exception as e:
                 self.log.warning(f'Exception occurred while closing FTP connection: {e}')
             finally:
