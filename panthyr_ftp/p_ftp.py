@@ -838,14 +838,35 @@ class pFTP:
             self._ensure_binary_mode()
 
             if lines:
+                # Debug: log the raw LIST output
+                self.log.debug(f'[GET_SIZE] Raw LIST output for {file}: {lines[0]}')
+
                 # Parse the LIST line to extract file size
                 parts = lines[0].split()
+                self.log.debug(f'[GET_SIZE] LIST parts: {parts}')
+
                 if len(parts) >= 5 and parts[0].startswith('-'):  # Regular file
-                    size = int(parts[4])  # Size is typically the 5th field
-                    self.log.debug(
-                        f'[GET_SIZE] File {file} size via LIST: {format_file_size(size)}'
-                    )
-                    return size
+                    try:
+                        size = int(parts[4])  # Size is typically the 5th field
+                        self.log.debug(
+                            f'[GET_SIZE] File {file} size via LIST: {format_file_size(size)} ({size} bytes)'
+                        )
+                        return size
+                    except (ValueError, IndexError) as parse_error:
+                        self.log.debug(f'[GET_SIZE] Error parsing size from field 4: {parse_error}')
+
+                        # Try different field positions in case LIST format varies
+                        for field_idx in range(len(parts)):
+                            try:
+                                if parts[field_idx].isdigit():
+                                    candidate_size = int(parts[field_idx])
+                                    if candidate_size > 0:  # Reasonable file size
+                                        self.log.debug(
+                                            f'[GET_SIZE] Found size in field {field_idx}: {format_file_size(candidate_size)} ({candidate_size} bytes)'
+                                        )
+                                        return candidate_size
+                            except (ValueError, IndexError):
+                                continue
 
             self.log.debug(f'[GET_SIZE] Could not parse file size from LIST output')
             return None
