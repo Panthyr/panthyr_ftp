@@ -39,6 +39,25 @@ def current_year_str() -> str:
     return dt.now(tz=dt.now().astimezone().tzinfo).strftime('%Y')
 
 
+def format_file_size(size_bytes: int) -> str:
+    """Format file size in bytes to kB with appropriate precision.
+
+    Args:
+        size_bytes: File size in bytes
+
+    Returns:
+        str: Formatted size string (e.g., "1.5 kB", "1023 bytes")
+    """
+    if size_bytes < 1024:
+        return f'{size_bytes} bytes'
+    else:
+        size_kb = size_bytes / 1024
+        if size_kb >= 100:
+            return f'{size_kb:.0f} kB'
+        else:
+            return f'{size_kb:.1f} kB'
+
+
 def retry_on_connection_error(max_retries: int = MAX_RETRIES, base_delay: float = RETRY_DELAY_BASE):
     """Decorator to retry FTP operations on connection errors with exponential backoff.
 
@@ -128,7 +147,15 @@ class FTPUploadFailed(FTPError):
 
 
 class pFTP:
-    """Access to the FTP server for storing data and logs"""
+    """Access to the FTP server with speed limiting and robust connection handling.
+
+    This class provides enhanced FTP functionality including:
+    - Upload speed limiting and custom chunk sizes
+    - Automatic retry logic for unstable connections
+    - Connection health monitoring and recovery
+    - Comprehensive debug logging
+    - Robust upload verification
+    """
 
     def __init__(
         self,
@@ -138,7 +165,24 @@ class pFTP:
         timeout: int = TIMEOUTDEFAULT,
         max_retries: int = MAX_RETRIES,
         retry_delay: float = RETRY_DELAY_BASE,
+        upload_speed_limit_kbps: Union[int, None] = 25,
+        upload_chunk_size: int = 8192,
     ) -> None:
+        """Initialize FTP client with enhanced reliability and speed control features.
+
+        Args:
+            server (str): FTP server hostname or IP address
+            user (str): Username for FTP authentication
+            pw (str): Password for FTP authentication
+            timeout (int, optional): Connection timeout in seconds. Defaults to 20.
+            max_retries (int, optional): Maximum retry attempts for failed operations.
+                                            Defaults to 2.
+            retry_delay (float, optional): Base delay between retries in seconds. Defaults to 2.0.
+            upload_speed_limit_kbps (Union[int, None], optional): Maximum upload speed in kB/s.
+                                                    None for unlimited speed. Defaults to None.
+            upload_chunk_size (int, optional): Size of chunks for file transfer in bytes.
+                                              Defaults to 8192.
+        """
         self.log = logging.getLogger(__name__)
         # Set logger to DEBUG level for maximum troubleshooting info
         self.log.setLevel(logging.DEBUG)
@@ -149,13 +193,19 @@ class pFTP:
         self.timeout = timeout
         self.max_retries = max_retries
         self.retry_delay = retry_delay
+        self.upload_speed_limit_kbps = upload_speed_limit_kbps
+        self.upload_chunk_size = upload_chunk_size
         self.ftp = None  # Will be initialized in login()
         self._last_connection_check = 0  # Timestamp of last connection health check
         self._connection_lost = False  # Track if we know connection is lost
 
+        speed_limit_str = (
+            f'{upload_speed_limit_kbps} kB/s' if upload_speed_limit_kbps else 'unlimited'
+        )
         self.log.debug(
             f'Initializing pFTP for server: {server}, user: {user}, '
-            f'timeout: {timeout}s, max_retries: {max_retries}, retry_delay: {retry_delay}s'
+            f'timeout: {timeout}s, max_retries: {max_retries}, retry_delay: {retry_delay}s, '
+            f'upload_speed_limit: {speed_limit_str}, chunk_size: {upload_chunk_size} bytes'
         )
 
     def __enter__(self):
@@ -191,10 +241,10 @@ class pFTP:
             except Exception as e:
                 self.log.debug(f'Could not get initial working directory: {e}')
 
-        except (ftputil.error.FTPError, OSError, socket.gaierror) as e:
-            self.log.exception(f'Failed to connect/log in to {self.server}: {e}', exc_info=True)
+        except (ftputil.error.FTPError, OSError, socket.gaierror):
+            self.log.exception(f'Failed to connect/log in to {self.server}', exc_info=True)
             self._connection_lost = True
-            raise FTPCannotLoginError from e
+            raise FTPCannotLoginError
         else:
             self._connection_lost = False
             self._last_connection_check = time.time()
@@ -361,6 +411,54 @@ class pFTP:
 
         return ret
 
+    def _speed_limited_upload(self, local_file: str, remote_file: str) -> None:
+        """Upload file with speed limiting and custom chunk size.
+
+        Args:
+            local_file: Path to local file to upload
+            remote_file: Target filename on remote server
+        """
+        chunk_size = self.upload_chunk_size
+        speed_limit_bytes_per_sec = (
+            self.upload_speed_limit_kbps * 1024 if self.upload_speed_limit_kbps else None
+        )
+
+        self.log.debug(
+            f'Starting speed-limited upload: chunk_size={chunk_size}, '
+            f'speed_limit={self.upload_speed_limit_kbps} kB/s'
+        )
+
+        with open(local_file, 'rb') as local_fp, self.ftp.open(remote_file, 'wb') as remote_fp:
+            bytes_transferred = 0
+            start_time = time.time()
+
+            while True:
+                chunk_start_time = time.time()
+                chunk = local_fp.read(chunk_size)
+
+                if not chunk:
+                    break
+
+                remote_fp.write(chunk)
+                bytes_transferred += len(chunk)
+
+                # Apply speed limiting if configured
+                if speed_limit_bytes_per_sec:
+                    chunk_transfer_time = time.time() - chunk_start_time
+                    expected_time = len(chunk) / speed_limit_bytes_per_sec
+
+                    if chunk_transfer_time < expected_time:
+                        sleep_time = expected_time - chunk_transfer_time
+                        time.sleep(sleep_time)
+
+            total_time = time.time() - start_time
+            if total_time > 0:
+                actual_speed_kbps = (bytes_transferred / 1024) / total_time
+                self.log.debug(
+                    f'Upload completed. Transferred: {format_file_size(bytes_transferred)}, '
+                    f'Time: {total_time:.1f}s, Avg speed: {actual_speed_kbps:.1f} kB/s'
+                )
+
     @retry_on_connection_error()
     def upload_file(
         self,
@@ -369,11 +467,15 @@ class pFTP:
         overwrite: bool = True,
         target_filename: Union[str, None] = None,
     ) -> None:
-        """Upload file from local system to server.
+        """Upload file from local system to server with speed limiting and custom chunk size.
 
-        File is uploaded to target_dir.
+        File is uploaded with robust verification and optional speed limiting.
         If overwrite is set to False, first check if file exists on remote.
         If file exists, raise FileExistsOnServer and exit.
+
+        Upload speed and chunk size are controlled by instance parameters:
+        - upload_speed_limit_kbps: Maximum upload speed in kB/s (None = unlimited)
+        - upload_chunk_size: Size of each chunk transferred (default 8192 bytes)
 
         Args:
             file (str): path to file to be uploaded
@@ -381,6 +483,8 @@ class pFTP:
                                     Defaults to None (current working directory)
             overwrite (bool, optional): Silently overwrite file if it exists on server.
                                             Defaults to True.
+            target_filename (Union[str, None], optional): Target filename on server.
+                                            Defaults to None (use original filename).
 
         Raises:
             ValueError: source file does not exist on local system.
@@ -403,7 +507,7 @@ class pFTP:
         try:
             # Get local file size for verification and progress tracking
             local_size = os.path.getsize(file)
-            self.log.debug(f'Local file size: {local_size} bytes')
+            self.log.debug(f'Local file size: {format_file_size(local_size)}')
 
             # For unstable connections, use multiple verification steps
             upload_attempts = 0
@@ -415,8 +519,8 @@ class pFTP:
                 try:
                     self.log.debug(f'Upload attempt {upload_attempts}/{max_upload_attempts}')
 
-                    # Perform the upload
-                    self.ftp.upload(file, target_filename)
+                    # Perform the upload with speed limiting
+                    self._speed_limited_upload(file, target_filename)
                     self.log.debug(f'Upload command completed for {target_filename}')
 
                     # Immediate verification - check if file exists
@@ -444,12 +548,14 @@ class pFTP:
                     if remote_size is not None:
                         if remote_size == local_size:
                             self.log.debug(
-                                f'Upload successful and verified. Size: {remote_size} bytes'
+                                f'Upload successful and verified. '
+                                f'Size: {format_file_size(remote_size)}'
                             )
                             return  # Success!
                         else:
                             error_msg = (
-                                f'Size mismatch - Local: {local_size}, Remote: {remote_size}'
+                                f'Size mismatch - Local: {format_file_size(local_size)}, '
+                                f'Remote: {format_file_size(remote_size)}'
                             )
                             self.log.warning(error_msg)
                             if upload_attempts < max_upload_attempts:
@@ -511,7 +617,7 @@ class pFTP:
         self.log.debug(f'Getting size of remote file: {file}')
         try:
             size = self.ftp.path.getsize(file)
-            self.log.debug(f'Remote file {file} size: {size} bytes')
+            self.log.debug(f'Remote file {file} size: {format_file_size(size)}')
             return size
         except (ftputil.error.FTPError, OSError) as e:
             self.log.debug(f'Could not get size of {file}: {e}')
@@ -610,7 +716,8 @@ def test_connection_stability(server: str, user: str, pw: str, test_duration: in
     success_rate = (results['successful_connections'] / results['total_attempts']) * 100
     print(f'\n--- Connection Stability Test Results ---')
     print(
-        f'Success Rate: {success_rate:.1f}% ({results["successful_connections"]}/{results["total_attempts"]})'
+        f'Success Rate: {success_rate:.1f}% ({results["successful_connections"]}/'
+        f'{results["total_attempts"]})'
     )
     print(f'Average Response Time: {results["average_response_time"]:.2f}s')
 
