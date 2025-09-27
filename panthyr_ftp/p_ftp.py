@@ -480,20 +480,20 @@ class pFTP:
             )
 
         try:
-            current_dir = self.ftp.getcwd()
-            self.log.debug(f'[CWD] Current directory before change: {current_dir}')
+            # current_dir = self.ftp.getcwd()
+            # self.log.debug(f'[CWD] Current directory before change: {current_dir}')
 
             self.log.debug(f'[CWD] Preparing/changing to main directory: {target_dir_checked}')
-            self._prep_dir(target_dir_checked)
+            # self._prep_dir(target_dir_checked)
             self.ftp.chdir(target_dir_checked)
 
             year_str = current_year_str()
-            self.log.debug(f'[CWD] Preparing/changing to year subdirectory: {year_str}')
-            self._prep_dir(year_str)
+            # self.log.debug(f'[CWD] Preparing/changing to year subdirectory: {year_str}')
+            # self._prep_dir(year_str)
             self.ftp.chdir(year_str)
 
-            final_dir = self.ftp.getcwd()
-            self.log.debug(f'[CWD] Successfully changed to final directory: {final_dir}')
+            # final_dir = self.ftp.getcwd()
+            # self.log.debug(f'[CWD] Successfully changed to final directory: {final_dir}')
 
         except (ftputil.error.FTPError, OSError) as e:
             self.log.error(f'[CWD] Could not change directory to [{target_dir}]: {e}')
@@ -723,13 +723,13 @@ class pFTP:
             target_filename = os.path.basename(file)
         self.log.debug(f'[UPLOAD_FILE] Target filename: {target_filename}, overwrite: {overwrite}')
 
-        if not overwrite:
-            self.log.debug('[UPLOAD_FILE] Checking if file exists on server (overwrite=False)')
-            if self._file_exists(target_filename):
-                self.log.warning(
-                    f'[UPLOAD_FILE] File {target_filename} already exists and overwrite=False'
-                )
-                raise FTPFileExistsOnServer
+        # if not overwrite:
+        #     self.log.debug('[UPLOAD_FILE] Checking if file exists on server (overwrite=False)')
+        #     if self._file_exists(target_filename):
+        #         self.log.warning(
+        #             f'[UPLOAD_FILE] File {target_filename} already exists and overwrite=False'
+        #         )
+        #         raise FTPFileExistsOnServer
 
         # Enhanced upload with progress tracking and verification
         # Use atomic upload: upload to temporary name, then rename to final name
@@ -762,11 +762,11 @@ class pFTP:
                     self.log.debug(
                         f'[UPLOAD_FILE] Checking for existing temp file: {temp_filename}'
                     )
-                    if self._file_exists(temp_filename):
-                        self.log.debug(
-                            f'[UPLOAD_FILE] Removing existing temp file: {temp_filename}'
-                        )
-                        self.ftp.remove(temp_filename)
+                    # if self._file_exists(temp_filename):
+                    #     self.log.debug(
+                    #         f'[UPLOAD_FILE] Removing existing temp file: {temp_filename}'
+                    #     )
+                    self.ftp.remove(temp_filename)
 
                     # Perform the upload with speed limiting to temporary filename
                     self.log.debug(
@@ -803,8 +803,8 @@ class pFTP:
                             # Now perform atomic rename to final filename
                             try:
                                 # Remove target file if it exists (for overwrite)
-                                if self._file_exists(target_filename):
-                                    self.ftp.remove(target_filename)
+                                # if self._file_exists(target_filename):
+                                self.ftp.remove(target_filename)
 
                                 # Rename temporary file to final name
                                 self.log.debug(f'Renaming {temp_filename} to {target_filename}')
@@ -836,11 +836,11 @@ class pFTP:
                             )
                             self.log.warning(error_msg)
                             # Clean up temporary file before retry
-                            try:
-                                if self._file_exists(temp_filename):
-                                    self.ftp.remove(temp_filename)
-                            except Exception:
-                                pass
+                            # try:
+                            #     if self._file_exists(temp_filename):
+                            #         self.ftp.remove(temp_filename)
+                            # except Exception:
+                            #     pass
 
                             if upload_attempts < max_upload_attempts:
                                 self.log.info('Retrying upload due to size mismatch...')
@@ -850,12 +850,12 @@ class pFTP:
 
                 except (ftputil.error.FTPError, OSError, socket.error) as upload_error:
                     # Clean up temporary file on upload error
-                    try:
-                        if self._file_exists(temp_filename):
-                            self.ftp.remove(temp_filename)
-                            self.log.debug('Cleaned up temporary file after upload error')
-                    except Exception:
-                        pass  # Don't fail on cleanup errors
+                    # try:
+                    #     if self._file_exists(temp_filename):
+                    #         self.ftp.remove(temp_filename)
+                    #         self.log.debug('Cleaned up temporary file after upload error')
+                    # except Exception:
+                    #     pass  # Don't fail on cleanup errors
 
                     if upload_attempts < max_upload_attempts:
                         self.log.warning(
@@ -870,11 +870,11 @@ class pFTP:
 
         except FTPUploadFailed:
             # Clean up temporary file on any FTP upload failure
-            try:
-                if self._file_exists(temp_filename):
-                    self.ftp.remove(temp_filename)
-            except Exception:
-                pass  # Don't fail on cleanup errors
+            # try:
+            #     if self._file_exists(temp_filename):
+            #         self.ftp.remove(temp_filename)
+            # except Exception:
+            #     pass  # Don't fail on cleanup errors
             raise  # Re-raise FTP upload failures
         except Exception as e:
             self.log.error(f'Unexpected error during upload: {e}')
