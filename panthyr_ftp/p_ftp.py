@@ -779,36 +779,36 @@ class pFTP:
 
                     # Size verification with retry on temporary file
                     remote_size = None
-                    for size_check_attempt in range(3):  # Try up to 3 times to get size
-                        try:
-                            remote_size = self.get_size(temp_filename)
-                            if remote_size is not None:
-                                break
-                        except Exception as size_error:
-                            if size_check_attempt == 2:  # Last attempt
-                                self.log.warning(
-                                    f'Could not verify file size after upload: {size_error}'
-                                )
-                            else:
-                                time.sleep(1)  # Brief pause between size check attempts
+                    # for size_check_attempt in range(3):  # Try up to 3 times to get size
+                    #     try:
+                    #         remote_size = self.get_size(temp_filename)
+                    #         if remote_size is not None:
+                    #             break
+                    #     except Exception as size_error:
+                    #         if size_check_attempt == 2:  # Last attempt
+                    #             self.log.warning(
+                    #                 f'Could not verify file size after upload: {size_error}'
+                    #             )
+                    #         else:
+                    #             time.sleep(1)  # Brief pause between size check attempts
 
-                    # Verify file integrity before rename
-                    if remote_size is not None:
-                        if remote_size == local_size:
-                            self.log.debug(
-                                f'Upload to temporary file successful and verified. '
-                                f'Size: {format_file_size(remote_size)}'
-                            )
+                    # # Verify file integrity before rename
+                    # if remote_size is not None:
+                    #     if remote_size == local_size:
+                    #         self.log.debug(
+                    #             f'Upload to temporary file successful and verified. '
+                    #             f'Size: {format_file_size(remote_size)}'
+                    #         )
 
-                            # Now perform atomic rename to final filename
-                            try:
-                                # Remove target file if it exists (for overwrite)
-                                # if self._file_exists(target_filename):
-                                self.ftp.remove(target_filename)
+                    #         # Now perform atomic rename to final filename
+                    #         try:
+                    #             # Remove target file if it exists (for overwrite)
+                    #             # if self._file_exists(target_filename):
+                    # self.ftp.remove(target_filename)
 
-                                # Rename temporary file to final name
-                                self.log.debug(f'Renaming {temp_filename} to {target_filename}')
-                                self.ftp.rename(temp_filename, target_filename)
+                    # Rename temporary file to final name
+                    self.log.debug(f'Renaming {temp_filename} to {target_filename}')
+                    self.ftp.rename(temp_filename, target_filename)
 
                                 # Success! Exit the retry loop
                                 self.log.debug(
