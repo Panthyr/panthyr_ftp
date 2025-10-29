@@ -401,23 +401,20 @@ class pFTP:
         """
         try:
             if self.ftp and hasattr(self.ftp, '_session'):
-                self.log.debug('[ENSURE_BINARY] Setting binary transfer mode')
                 try:
                     response = self.ftp._session.voidcmd('TYPE I')  # TYPE I = binary mode
-                    self.log.debug(f'[ENSURE_BINARY] Server response: {response}')
                 except ftputil.error.FTPError as ftp_error:
                     # Check if it's just an informational response about type change
                     error_msg = str(ftp_error)
                     if '200' in error_msg and ('Type set to' in error_msg or 'TYPE' in error_msg):
-                        self.log.debug(f'[ENSURE_BINARY] Server confirmed mode change: {error_msg}')
+                        pass  # Server confirmed mode change
                     else:
                         # It's a real error
                         raise
-                self.log.debug('[ENSURE_BINARY] Binary mode confirmed')
         except (ftputil.error.FTPError, OSError) as e:
             # Only warn if it's not a harmless "Type set to" response
             if not ('200' in str(e) and 'Type set to' in str(e)):
-                self.log.warning(f'[ENSURE_BINARY] Could not ensure binary mode: {e}')
+                self.log.warning(f'Could not ensure binary mode: {e}')
 
     @retry_on_connection_error()
     def cwd(self, target_dir: str) -> None:
@@ -462,18 +459,15 @@ class pFTP:
         Args:
             dir_name (str): subdirectory to check/create
         """
-        self.log.debug(f'[PREP_DIR] Checking if directory exists: {dir_name}')
         try:
             # Try to change to the directory - if it works, it exists
             current_dir = self.ftp.getcwd()
             self.ftp.chdir(dir_name)
             self.ftp.chdir(current_dir)  # Change back
-            self.log.debug(f'[PREP_DIR] Directory [{dir_name}] already exists')
         except (ftputil.error.FTPError, OSError):
             # Directory doesn't exist, create it
-            self.log.debug(f'[PREP_DIR] Directory [{dir_name}] does not exist, creating...')
             self.ftp.mkdir(dir_name)
-            self.log.debug(f'[PREP_DIR] Successfully created directory: {dir_name}')
+            self.log.info(f'Created directory: {dir_name}')
 
     def _temp_cwd(self, target_dir: Union[str, None]) -> Union[str, None]:
         """Temporarily change the working directory.
@@ -570,41 +564,25 @@ class pFTP:
             local_file: Path to local file to upload
             remote_file: Target filename on remote server
         """
-        self.log.debug(f'[SPEED_LIMITED_UPLOAD] Starting upload from {local_file} to {remote_file}')
         chunk_size = self.upload_chunk_size
         speed_limit_bytes_per_sec = (
             self.upload_speed_limit_kbps * 1024 if self.upload_speed_limit_kbps else None
         )
 
-        self.log.debug(
-            f'[SPEED_LIMITED_UPLOAD] Parameters: chunk_size={chunk_size}, '
-            f'speed_limit={self.upload_speed_limit_kbps} kB/s'
-        )
-
-        self.log.debug(f'[SPEED_LIMITED_UPLOAD] Opening local file: {local_file}')
         with open(local_file, 'rb') as local_fp:
-            self.log.debug(f'[SPEED_LIMITED_UPLOAD] Opening remote file for writing: {remote_file}')
             with self.ftp.open(remote_file, 'wb') as remote_fp:
                 bytes_transferred = 0
                 start_time = time.time()
                 chunk_count = 0
 
-                self.log.debug('[SPEED_LIMITED_UPLOAD] Starting chunk transfer loop')
                 while True:
                     chunk_start_time = time.time()
-                    # self.log.debug(
-                    #     f'[SPEED_LIMITED_UPLOAD] Reading chunk {chunk_count + 1}, size {chunk_size}'
-                    # )
                     chunk = local_fp.read(chunk_size)
 
                     if not chunk:
-                        self.log.debug('[SPEED_LIMITED_UPLOAD] End of file reached, breaking loop')
                         break
 
                     chunk_count += 1
-                    # self.log.debug(
-                    #     f'[SPEED_LIMITED_UPLOAD] Writing chunk {chunk_count}, size {len(chunk)} bytes'
-                    # )
                     remote_fp.write(chunk)
                     bytes_transferred += len(chunk)
 
@@ -615,23 +593,19 @@ class pFTP:
 
                         if chunk_transfer_time < expected_time:
                             sleep_time = expected_time - chunk_transfer_time
-                            # self.log.debug(
-                            #     f'[SPEED_LIMITED_UPLOAD] Speed limiting: sleeping {sleep_time:.3f}s'
-                            # )
                             time.sleep(sleep_time)
 
                     if chunk_count % 100 == 0:  # Log progress every 100 chunks
                         self.log.debug(
-                            f'[SPEED_LIMITED_UPLOAD] Progress: {chunk_count} chunks, {format_file_size(bytes_transferred)} transferred'
+                            f'Progress: {chunk_count} chunks, {format_file_size(bytes_transferred)} transferred'
                         )
 
             total_time = time.time() - start_time
             if total_time > 0:
                 actual_speed_kbps = (bytes_transferred / 1024) / total_time
-                self.log.debug(
-                    f'[SPEED_LIMITED_UPLOAD] Upload completed. Chunks: {chunk_count}, '
-                    f'Transferred: {format_file_size(bytes_transferred)}, '
-                    f'Time: {total_time:.1f}s, Avg speed: {actual_speed_kbps:.1f} kB/s'
+                self.log.info(
+                    f'Upload completed: {format_file_size(bytes_transferred)} '
+                    f'in {total_time:.1f}s (avg {actual_speed_kbps:.1f} kB/s)'
                 )
 
     @retry_on_connection_error()
@@ -669,151 +643,40 @@ class pFTP:
             FileExistsOnServer: target file exists on server and overwrite == False
             UploadFailed: issue during upload, verification, or atomic rename operation
         """
-        self.log.debug(f'[UPLOAD_FILE] Starting upload for file: {file}')
         if not os.path.isfile(file):
             msg = f'File {file} does not exist.'
-            self.log.error(f'[UPLOAD_FILE] {msg}')
+            self.log.error(msg)
             raise ValueError(msg)
 
-        # initial_dir = self._temp_cwd(target_dir)
         if not target_filename:
             target_filename = os.path.basename(file)
-        self.log.debug(f'[UPLOAD_FILE] Target filename: {target_filename}, overwrite: {overwrite}')
 
-        # if not overwrite:
-        #     self.log.debug('[UPLOAD_FILE] Checking if file exists on server (overwrite=False)')
-        #     if self._file_exists(target_filename):
-        #         self.log.warning(
-        #             f'[UPLOAD_FILE] File {target_filename} already exists and overwrite=False'
-        #         )
-        #         raise FTPFileExistsOnServer
-
-        # Enhanced upload with progress tracking and verification
         # Use atomic upload: upload to temporary name, then rename to final name
         temp_filename = 'uploading.now'
-        self.log.debug(
-            f'[UPLOAD_FILE] Using atomic upload with temporary filename: {temp_filename}'
-        )
 
         try:
             # Get local file size for verification and progress tracking
-            self.log.debug(f'[UPLOAD_FILE] Getting local file size for {file}')
             local_size = os.path.getsize(file)
-            self.log.debug(f'[UPLOAD_FILE] Local file size: {format_file_size(local_size)}')
+            self.log.info(f'Uploading {target_filename} ({format_file_size(local_size)})')
 
-            # For unstable connections, use multiple verification steps
+            # For unstable connections, allow retry
             upload_attempts = 0
             max_upload_attempts = 2  # Allow one retry for upload itself
-            self.log.debug(
-                f'[UPLOAD_FILE] Starting upload loop, max attempts: {max_upload_attempts}'
-            )
 
             while upload_attempts < max_upload_attempts:
                 upload_attempts += 1
-                self.log.debug(
-                    f'[UPLOAD_FILE] === Upload attempt {upload_attempts}/{max_upload_attempts} ==='
-                )
 
                 try:
-                    # Clean up any existing temporary file first
-                    self.log.debug(
-                        f'[UPLOAD_FILE] Checking for existing temp file: {temp_filename}'
-                    )
-                    # if self._file_exists(temp_filename):
-                    #     self.log.debug(
-                    #         f'[UPLOAD_FILE] Removing existing temp file: {temp_filename}'
-                    #     )
-                    # self.ftp.remove(temp_filename)
-
                     # Perform the upload with speed limiting to temporary filename
-                    self.log.debug(
-                        f'[UPLOAD_FILE] Starting speed-limited upload to {temp_filename}'
-                    )
                     self._speed_limited_upload(file, temp_filename)
-                    self.log.debug(
-                        f'[UPLOAD_FILE] Upload command completed for temporary file {temp_filename}'
-                    )
-
-                    # Size verification with retry on temporary file
-                    # remote_size = None
-                    # for size_check_attempt in range(3):  # Try up to 3 times to get size
-                    #     try:
-                    #         remote_size = self.get_size(temp_filename)
-                    #         if remote_size is not None:
-                    #             break
-                    #     except Exception as size_error:
-                    #         if size_check_attempt == 2:  # Last attempt
-                    #             self.log.warning(
-                    #                 f'Could not verify file size after upload: {size_error}'
-                    #             )
-                    #         else:
-                    #             time.sleep(1)  # Brief pause between size check attempts
-
-                    # # Verify file integrity before rename
-                    # if remote_size is not None:
-                    #     if remote_size == local_size:
-                    #         self.log.debug(
-                    #             f'Upload to temporary file successful and verified. '
-                    #             f'Size: {format_file_size(remote_size)}'
-                    #         )
-
-                    #         # Now perform atomic rename to final filename
-                    #         try:
-                    #             # Remove target file if it exists (for overwrite)
-                    #             # if self._file_exists(target_filename):
-                    # self.ftp.remove(target_filename)
 
                     # Rename temporary file to final name
                     self.log.debug(f'Renaming {temp_filename} to {target_filename}')
                     self.ftp.rename(temp_filename, target_filename)
-
-                #         # Success! Exit the retry loop
-                #         # self.log.debug(
-                #         #     f'Atomic upload completed successfully: {target_filename}'
-                #         # )
-                #         # return
-
-                #     except (ftputil.error.FTPError, OSError) as rename_error:
-                #         # Clean up temporary file on rename failure
-                #         try:
-                #             if self._file_exists(temp_filename):
-                #                 self.ftp.remove(temp_filename)
-                #                 self.log.debug(
-                #                     f'Cleaned up temporary file after rename failure'
-                #                 )
-                #         except Exception:
-                #             pass  # Don't fail on cleanup errors
-                #         raise FTPUploadFailed(
-                #             f'Failed to rename {temp_filename} to {target_filename}: {rename_error}'
-                #         )
-                # else:
-                #     error_msg = (
-                #         f'Size mismatch - Local: {format_file_size(local_size)}, '
-                #         f'Remote: {format_file_size(remote_size)}'
-                # #     )
-                # #     self.log.warning(error_msg)
-                # #     # Clean up temporary file before retry
-                #     # try:
-                #     #     if self._file_exists(temp_filename):
-                #     #         self.ftp.remove(temp_filename)
-                #     # except Exception:
-                #     #     pass
-
-                #     if upload_attempts < max_upload_attempts:
-                #         self.log.info('Retrying upload due to size mismatch...')
-                #         continue
-                #     else:
-                #         raise FTPUploadFailed(error_msg)
+                    self.log.info(f'Successfully uploaded {target_filename}')
+                    return  # Success!
 
                 except (ftputil.error.FTPError, OSError, socket.error) as upload_error:
-                    # Clean up temporary file on upload error
-                    # try:
-                    #     if self._file_exists(temp_filename):
-                    #         self.ftp.remove(temp_filename)
-                    #         self.log.debug('Cleaned up temporary file after upload error')
-                    # except Exception:
-                    #     pass  # Don't fail on cleanup errors
-
                     if upload_attempts < max_upload_attempts:
                         self.log.warning(
                             f'Upload attempt {upload_attempts} failed: {upload_error}. Retrying...'
@@ -821,23 +684,17 @@ class pFTP:
                         time.sleep(2)  # Brief pause before retry
                         continue
                     else:
-                        raise FTPUploadFailed(
+                        error_msg = (
                             f'Upload failed after {max_upload_attempts} attempts: {upload_error}'
-                        ) from upload_error
+                        )
+                        raise FTPUploadFailed(error_msg) from upload_error
 
         except FTPUploadFailed:
-            # Clean up temporary file on any FTP upload failure
-            # try:
-            #     if self._file_exists(temp_filename):
-            #         self.ftp.remove(temp_filename)
-            # except Exception:
-            #     pass  # Don't fail on cleanup errors
             raise  # Re-raise FTP upload failures
         except Exception as e:
             self.log.error(f'Unexpected error during upload: {e}')
-            raise FTPUploadFailed('Unexpected upload error') from e
-
-        # self._temp_cwd(initial_dir)
+            error_msg = 'Unexpected upload error'
+            raise FTPUploadFailed(error_msg) from e
 
     @retry_on_connection_error()
     @timeout_operation(30)  # 30 second timeout for file existence checks
@@ -850,24 +707,19 @@ class pFTP:
         Returns:
             bool: True if file exists, False otherwise
         """
-        self.log.debug(f'[FILE_EXISTS] Checking if file exists: {file}')
         try:
             # Use ftputil's listdir() method to get file list
             files = self.ftp.listdir('.')
             exists = file in files
-            self.log.debug(f'[FILE_EXISTS] File {file} exists: {exists}')
         except (ftputil.error.FTPError, OSError) as e:
-            self.log.debug(f'[FILE_EXISTS] Error checking file existence: {e}')
+            self.log.debug(f'listdir() failed: {e}, trying fallback')
             # Fallback: try using the underlying session's nlst command
             try:
-                self.log.debug(f'[FILE_EXISTS] Trying fallback method with _session.nlst()')
                 files = self.ftp._session.nlst()
                 exists = file in files
-                self.log.debug(f'[FILE_EXISTS] File {file} exists (via fallback): {exists}')
             except (ftputil.error.FTPError, OSError) as fallback_error:
-                self.log.debug(f'[FILE_EXISTS] Fallback also failed: {fallback_error}')
+                self.log.debug(f'Fallback also failed: {fallback_error}')
                 exists = False
-                self.log.debug(f'[FILE_EXISTS] File {file} exists: {exists}')
         return exists
 
     @retry_on_connection_error()
@@ -881,37 +733,25 @@ class pFTP:
         Returns:
             Union[int, None]: file size in bytes or None if not successful.
         """
-        self.log.debug(f'[GET_SIZE] Getting size for file: {file}')
         try:
             # Use LIST command directly to avoid SIZE command issues in ASCII mode
-            self.log.debug(f'[GET_SIZE] Using LIST command for file: {file}')
             lines = []
             # retrlines automatically switches to ASCII mode
             self.ftp._session.retrlines(f'LIST {file}', lines.append)
 
             # Allow server to complete mode transition, then restore binary mode
-            # Some servers send "200 Type set to A" which isn't an error
             time.sleep(0.1)  # Brief pause for server to settle
             self._ensure_binary_mode()
 
             if lines:
-                # Debug: log the raw LIST output
-                self.log.debug(f'[GET_SIZE] Raw LIST output for {file}: {lines[0]}')
-
                 # Parse the LIST line to extract file size
                 parts = lines[0].split()
-                self.log.debug(f'[GET_SIZE] LIST parts: {parts}')
 
                 if len(parts) >= 5 and parts[0].startswith('-'):  # Regular file
                     try:
                         size = int(parts[4])  # Size is typically the 5th field
-                        self.log.debug(
-                            f'[GET_SIZE] File {file} size via LIST: {format_file_size(size)} ({size} bytes)'
-                        )
                         return size
-                    except (ValueError, IndexError) as parse_error:
-                        self.log.debug(f'[GET_SIZE] Error parsing size from field 4: {parse_error}')
-
+                    except (ValueError, IndexError):
                         # Try different field positions in case LIST format varies
                         for field_idx in range(len(parts)):
                             try:
@@ -919,16 +759,16 @@ class pFTP:
                                     candidate_size = int(parts[field_idx])
                                     if candidate_size > 0:  # Reasonable file size
                                         self.log.debug(
-                                            f'[GET_SIZE] Found size in field {field_idx}: {format_file_size(candidate_size)} ({candidate_size} bytes)'
+                                            f'Found size in field {field_idx}: '
+                                            f'{format_file_size(candidate_size)}'
                                         )
                                         return candidate_size
                             except (ValueError, IndexError):
                                 continue
 
-            self.log.debug(f'[GET_SIZE] Could not parse file size from LIST output')
             return None
         except (ftputil.error.FTPError, OSError) as e:
-            self.log.debug(f'[GET_SIZE] Could not get size of {file}: {e}')
+            self.log.debug(f'Could not get size of {file}: {e}')
             return None
 
     def quit(self) -> None:
@@ -938,19 +778,16 @@ class pFTP:
         if the server responds with an error to the QUIT command.
         This renders the FTP instance useless for subsequent calls.
         """
-        self.log.debug('[QUIT] Starting FTP connection close process')
         if self.ftp:
-            self.log.debug(f'[QUIT] Closing FTP connection to {self.server}')
             try:
                 self.ftp.close()
-                self.log.debug('[QUIT] FTP connection closed successfully')
+                self.log.info(f'Closed FTP connection to {self.server}')
             except Exception as e:
-                self.log.warning(f'[QUIT] Exception occurred while closing FTP connection: {e}')
+                self.log.warning(f'Exception while closing FTP connection: {e}')
             finally:
                 self.ftp = None
-                self.log.debug('[QUIT] FTP connection object set to None')
         else:
-            self.log.debug('[QUIT] No FTP connection to close')
+            self.log.debug('No FTP connection to close')
 
 
 def enable_debug_logging():
@@ -1024,10 +861,10 @@ def test_connection_stability(server: str, user: str, pw: str, test_duration: in
 
     # Print summary
     success_rate = (results['successful_connections'] / results['total_attempts']) * 100
-    print(f'\n--- Connection Stability Test Results ---')
+    print('\n--- Connection Stability Test Results ---')
     print(
         f'Success Rate: {success_rate:.1f}% ({results["successful_connections"]}/'
-        f'{results["total_attempts"]})'
+        f'{results["total_attempts"]})',
     )
     print(f'Average Response Time: {results["average_response_time"]:.2f}s')
 
