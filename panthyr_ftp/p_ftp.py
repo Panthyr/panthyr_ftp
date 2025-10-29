@@ -75,20 +75,12 @@ def retry_on_connection_error(max_retries: int = MAX_RETRIES, base_delay: float 
             last_exception = None
 
             for attempt in range(max_retries + 1):  # +1 for initial attempt
-                self.log.debug(
-                    f'[RETRY_DECORATOR] Attempt {attempt + 1}/{max_retries + 1} for {func.__name__}'
-                )
                 try:
                     # Check if connection is healthy before attempting operation
                     if hasattr(self, 'ftp') and self.ftp and hasattr(self, '_check_connection'):
-                        self.log.debug(
-                            f'[RETRY_DECORATOR] Checking connection health before {func.__name__}'
-                        )
                         self._check_connection()
 
-                    self.log.debug(f'[RETRY_DECORATOR] Executing {func.__name__}')
                     result = func(self, *args, **kwargs)
-                    self.log.debug(f'[RETRY_DECORATOR] {func.__name__} completed successfully')
                     return result
 
                 except (
@@ -322,59 +314,40 @@ class pFTP:
         Raises:
             ftputil.error.FTPError: if connection fails.
         """
-        self.log.debug(f'[LOGIN] Starting login process to {self.server}')
         try:
-            self.log.debug(f'[LOGIN] Creating FTPHost connection to {self.server}')
             # ftputil.FTPHost automatically handles login during connection
             self.ftp = ftputil.FTPHost(self.server, self.user, self.pw)
-            self.log.debug(f'[LOGIN] Successfully connected to {self.server}')
+            self.log.debug(f'Connected to {self.server}')
 
             # Enable passive mode for better firewall/NAT compatibility
-            self.log.debug('[LOGIN] Enabling passive mode')
-            # Access the underlying ftplib connection to set passive mode
-            # ftputil uses _session for the control connection
             try:
                 if hasattr(self.ftp, '_session'):
                     self.ftp._session.set_pasv(True)
-                    self.log.debug('[LOGIN] Passive mode enabled successfully via _session')
                 else:
-                    self.log.warning('[LOGIN] Could not access _session to set passive mode')
+                    self.log.warning('Could not access _session to set passive mode')
             except AttributeError as e:
-                self.log.warning(f'[LOGIN] Could not set passive mode: {e}')
+                self.log.warning(f'Could not set passive mode: {e}')
 
-            # Set binary mode for reliable file transfers and SIZE command support
-            self.log.debug('[LOGIN] Setting binary transfer mode')
+            # Set binary mode for reliable file transfers
             try:
                 if hasattr(self.ftp, '_session'):
                     self.ftp._session.voidcmd('TYPE I')  # TYPE I = binary mode
-                    self.log.debug('[LOGIN] Binary mode enabled successfully')
                 else:
-                    self.log.warning('[LOGIN] Could not access _session to set binary mode')
+                    self.log.warning('Could not access _session to set binary mode')
             except (ftputil.error.FTPError, OSError) as e:
-                self.log.warning(f'[LOGIN] Could not set binary mode: {e}')
+                self.log.warning(f'Could not set binary mode: {e}')
 
             # Set timeout if supported
-            self.log.debug(f'[LOGIN] Setting timeout to {self.timeout}s')
             if hasattr(self.ftp, 'set_timeout'):
                 self.ftp.set_timeout(self.timeout)
-                self.log.debug(f'[LOGIN] Timeout set successfully')
-
-            # Log current working directory after login
-            self.log.debug(f'[LOGIN] Getting initial working directory')
-            try:
-                current_dir = self.ftp.getcwd()
-                self.log.debug(f'[LOGIN] Initial working directory: {current_dir}')
-            except Exception as e:
-                self.log.debug(f'[LOGIN] Could not get initial working directory: {e}')
 
         except (ftputil.error.FTPError, OSError, socket.gaierror) as e:
-            self.log.error(f'[LOGIN] Failed to connect/log in to {self.server}: {e}')
+            self.log.error(f'Failed to connect to {self.server}: {e}')
             self._connection_lost = True
             raise FTPCannotLoginError from e
         else:
             self._connection_lost = False
             self._last_connection_check = time.time()
-            self.log.debug(f'[LOGIN] Login process completed successfully')
 
     def _check_connection(self) -> bool:
         """Check if FTP connection is still healthy.
@@ -382,59 +355,43 @@ class pFTP:
         Returns:
             bool: True if connection is healthy, False otherwise
         """
-        self.log.debug('[CHECK_CONNECTION] Starting connection health check')
         current_time = time.time()
 
         # Only check periodically to avoid overhead
         time_since_last_check = current_time - self._last_connection_check
         if time_since_last_check < CONNECTION_CHECK_INTERVAL:
-            self.log.debug(
-                f'[CHECK_CONNECTION] Skipping check, last check was {time_since_last_check:.1f}s ago'
-            )
             return not self._connection_lost
-
-        self.log.debug('[CHECK_CONNECTION] Performing connection health check...')
 
         try:
             if self.ftp:
-                self.log.debug('[CHECK_CONNECTION] Testing connection with getcwd()')
                 # Try a simple operation to test connection
-                current_dir = self.ftp.getcwd()
-                self.log.debug(
-                    f'[CHECK_CONNECTION] Connection test successful, current dir: {current_dir}'
-                )
+                self.ftp.getcwd()
                 self._connection_lost = False
                 self._last_connection_check = current_time
                 return True
             else:
-                self.log.debug('[CHECK_CONNECTION] No FTP connection object exists')
                 self._connection_lost = True
         except Exception as e:
-            self.log.warning(f'[CHECK_CONNECTION] Connection health check failed: {e}')
+            self.log.warning(f'Connection health check failed: {e}')
             self._connection_lost = True
 
         return False
 
     def _reconnect(self) -> None:
         """Attempt to reconnect to the FTP server."""
-        self.log.info(f'[RECONNECT] Attempting to reconnect to {self.server}...')
+        self.log.info(f'Reconnecting to {self.server}...')
 
         # Close existing connection if any
         if self.ftp:
-            self.log.debug('[RECONNECT] Closing existing FTP connection')
             try:
                 self.ftp.close()
-                self.log.debug('[RECONNECT] Existing connection closed successfully')
-            except Exception as e:  # noqa: S110
-                self.log.debug(f'[RECONNECT] Error closing existing connection (ignored): {e}')
+            except Exception:
+                pass
             finally:
                 self.ftp = None
-                self.log.debug('[RECONNECT] FTP connection object set to None')
 
         # Attempt fresh login
-        self.log.debug('[RECONNECT] Attempting fresh login')
         self.login()
-        self.log.debug('[RECONNECT] Reconnection completed successfully')
 
     def _ensure_binary_mode(self) -> None:
         """Ensure the connection is in binary mode.
